@@ -144,6 +144,26 @@ against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
 - The web UI has no authentication — put it behind a reverse proxy or bind it
   to localhost if you expose it beyond your LAN.
 
+## Docker
+
+```bash
+docker pull ghcr.io/snailium/mqtt2ha:latest
+
+# one directory holds config.yaml + mqtt2ha.db (persistent)
+mkdir -p ~/mqtt2ha
+cp config.example.yaml ~/mqtt2ha/config.yaml
+# edit ~/mqtt2ha/config.yaml (broker, credentials, http port...)
+
+docker run -d --name mqtt2ha \
+  -v ~/mqtt2ha:/app/data \
+  -p 8080:8080 \
+  ghcr.io/snailium/mqtt2ha:latest
+```
+
+The container runs as an unprivileged user; `config.yaml` and the SQLite
+registry live in `/app/data` (mount a volume there). The web UI port comes
+from the `http:` setting in your config (`:8080` in the example).
+
 ## License
 
 [MIT](LICENSE)

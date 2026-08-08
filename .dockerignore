@@ -1,0 +1,20 @@
+# binaries & runtime data
+/mqtt2ha
+/mqtt2ha.db
+/mqtt2ha.db-shm
+/mqtt2ha.db-wal
+
+# local config with real credentials
+/config.yaml
+
+# VCS
+.git
+.gitignore
+
+# CI
+.github
+
+# misc
+*.log
+README.md
+LICENSE
