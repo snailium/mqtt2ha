@@ -125,3 +125,13 @@ against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
 ## License
 
 [MIT](LICENSE)
+
+## Credits
+
+This project is a **human–AI collaboration**:
+
+- **Snailium** — product owner: requirements, deployment, live-environment validation
+- **Hermes Agent** (Nous Research) — design and implementation
+
+Developed and debugged against a live Home Assistant + mosquitto + Telegraf +
+Zigbee2MQTT stack (August 2026).
