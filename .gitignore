@@ -1,0 +1,14 @@
+# binary
+/mqtt2ha
+
+# SQLite registry (runtime data)
+/mqtt2ha.db
+/mqtt2ha.db-shm
+/mqtt2ha.db-wal
+
+# local config with real credentials — use config.example.yaml instead
+/config.yaml
+
+# misc
+*.log
+.DS_Store

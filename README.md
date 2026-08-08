@@ -1,0 +1,127 @@
+# mqtt2ha
+
+**MQTT JSON → Home Assistant auto-discovery bridge.**
+
+A single static binary that watches your MQTT broker, learns which nodes publish
+JSON data, and publishes Home Assistant [MQTT discovery](
+https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) messages so your
+devices appear in HA automatically — without writing YAML and without touching
+your HA configuration.
+
+```
+          ┌─────────────────────────────────────────────────────────────┐
+          │                        MQTT broker                           │
+          │                                                              │
+  node ──►│  home/ups/ups         (raw JSON data, untouched)             │
+  (Telegraf, │                                                           │
+   ESP, etc.)│  homeassistant/sensor/.../config  ◄── mqtt2ha publishes    │
+          │                                                              │
+          └───────────────┬───────────────────────────────▲──────────────┘
+                          │ data (direct, no relay)      │ discovery
+                          ▼                              │
+                   Home Assistant ◄──────────────────────┘
+                   (subscribes homeassistant/#)
+```
+
+**Data never flows through mqtt2ha.** mqtt2ha only *reads* data topics to learn
+their shape, then publishes discovery configuration messages. HA subscribes to
+the original data topic directly (`state_topic`), so mqtt2ha is a pure
+side-car: if it crashes, your monitoring keeps working.
+
+## Features
+
+- **Zero-config auto discovery** — plain JSON on any topic becomes HA sensors.
+  Understands both flat JSON and the nested Telegraf format
+  (`{"fields":{...},"tags":{...}}`).
+- **Observation window** — a new node is observed for N messages before its
+  discovery is published (`auto` mode), or held for manual approval
+  (`approval` mode).
+- **Automatic blacklist learning** — if a node publishes its own HA discovery
+  (e.g. Zigbee2MQTT, ESPHome), mqtt2ha detects it on the
+  `homeassistant/+/+/config` channel, retires its pending state and blacklists
+  that topic so both sides never fight over the same entities.
+- **Exact-topic blacklist** — blacklisting `home/ups/ups` does not affect
+  `home/ups/cp1000`.
+- **SQLite registry** — devices, entities and settings persist across restarts.
+- **Simple web UI** — review pending nodes, approve/reject/blacklist, and
+  re-publish discovery configs.
+
+## Quick start
+
+```bash
+# build (Go 1.25+)
+go build -o mqtt2ha .
+
+# configure
+cp config.example.yaml config.yaml
+$EDITOR config.yaml
+
+# run
+./mqtt2ha -config config.yaml
+```
+
+Open the web UI at `http://localhost:8080` to see discovered nodes.
+
+## Configuration
+
+```yaml
+mqtt:
+  broker: "localhost:1883"
+  username: "mqtt_user"
+  password: "change-me"
+  subscribe: ["#"]            # data topics to watch (default: everything)
+  discovery_prefix: "homeassistant"   # HA discovery prefix
+  keep_alive: 30
+  client_id: "mqtt2ha"
+mode: "auto"                  # "auto" or "approval"
+observe_count: 3              # messages before auto-publishing discovery
+database: "mqtt2ha.db"        # SQLite registry path
+http: ":8080"                 # web UI listen address (empty disables)
+```
+
+## How it works
+
+1. **Observe.** A JSON message on a new topic creates a device in `pending`
+   state. Field names, units and device classes are inferred from the payload;
+   Telegraf `tags.model/serial/ups_name` become the HA device card.
+2. **Self-discovery detection.** mqtt2ha listens on
+   `homeassistant/+/+/config` (both 4- and 5-segment HA formats). If a node's
+   own discovery appears there and its `state_topic` matches a pending device,
+   the pending entry is deleted and that exact topic is blacklisted — the node
+   manages its own entities, mqtt2ha steps aside.
+3. **Publish.** In `auto` mode, after `observe_count` messages a device is
+   auto-approved and its discovery messages are published (retained, QoS 1).
+   In `approval` mode it stays `pending` until you approve it in the web UI.
+
+Entity `value_template`s use
+`{{ value_json.fields.<field> | default(value_json.<field>) }}` so a single
+discovery works for both Telegraf-style nested payloads and flat JSON.
+
+## Project status
+
+This is an **M1** release: the core loop is implemented, tested and verified
+against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
+
+- **M1 — core (done):** observation window, auto mode, self-discovery
+  detection, exact-topic blacklist, SQLite registry, Telegraf/flat JSON
+  inference, unit tests.
+- **M2 — approval workflow (partial):** `approval` mode and a basic web UI
+  (list / approve / reject / blacklist / re-publish) exist. Not yet done:
+  per-entity enable/disable, editing inferred config before publishing,
+  config export/import.
+- **M3 — open-source hardening (not started):** components beyond `sensor`
+  (binary_sensor, switch, …), more output formats, additional inference rules,
+  CI publishing releases.
+
+## Known limitations
+
+- Only `sensor` entities are published (M3 will add more components).
+- Subscribing to `#` will observe *every* JSON topic on the broker (including
+  frigate, system metrics, …). Use the blacklist or narrow `subscribe` to what
+  you actually want in HA.
+- The web UI has no authentication — put it behind a reverse proxy or bind it
+  to localhost if you expose it beyond your LAN.
+
+## License
+
+[MIT](LICENSE)

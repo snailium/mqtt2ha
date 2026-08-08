@@ -1,0 +1,18 @@
+mqtt:
+  broker: "localhost:1883"
+  username: "mqtt_user"
+  password: "change-me"
+  # data topics to watch. "#" observes everything; narrow it (e.g. "home/#")
+  # if you only want a subset in Home Assistant.
+  subscribe: ["#"]
+  # Home Assistant MQTT discovery prefix (HA default: "homeassistant")
+  discovery_prefix: "homeassistant"
+  keep_alive: 30
+  client_id: "mqtt2ha"
+# "auto": publish discovery after observe_count messages
+# "approval": hold new nodes pending until approved in the web UI
+mode: "auto"
+observe_count: 3
+database: "mqtt2ha.db"
+# web UI listen address; empty string disables the UI
+http: ":8080"
