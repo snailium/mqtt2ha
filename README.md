@@ -124,11 +124,16 @@ against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
   inference, unit tests.
 - **M2 — approval workflow (done):** `approval` mode, web UI (list /
   approve / reject / blacklist / re-publish), per-entity enable/disable,
-  editing device/entity config before publishing (name, device_class, unit),
-  config export/import, blacklist management (add/remove).
-- **M3 — open-source hardening (not started):** components beyond `sensor`
-  (binary_sensor, switch, …), more output formats, additional inference rules,
-  CI publishing releases.
+  editing device/entity config before publishing (name, device_class, unit,
+  component), config export/import, blacklist management (add/remove).
+- **M3 — open-source hardening (done):** `binary_sensor` support (bool and
+  on/off-style string payloads, device_class inference: motion/door/window/
+  occupancy/moisture/connectivity/presence), `state_class: measurement` for
+  numeric sensors, extended inference (humidity/pressure/current/energy/
+  signal/illuminance), GitHub Actions CI (gofmt/vet/test) and tagged releases
+  with cross-compiled binaries (linux/darwin/windows × amd64/arm64). Not
+  planned: writable components (switch/number) — they need command topics and
+  conflict with the read-only design.
 
 ## Known limitations
 

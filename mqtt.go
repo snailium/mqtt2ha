@@ -265,7 +265,11 @@ func (b *Bridge) publishDevice(dev *Device) error {
 		if !e.Enabled {
 			// clear any previously published discovery for this entity
 			uid := entityUniqueID(dev, e)
-			topic := fmt.Sprintf("%s/sensor/%s/config", b.cfg.MQTT.DiscoveryPrefix, uid)
+			component := e.Component
+			if component == "" {
+				component = ComponentSensor
+			}
+			topic := fmt.Sprintf("%s/%s/%s/config", b.cfg.MQTT.DiscoveryPrefix, component, uid)
 			tok := b.client.Publish(topic, 1, true, []byte{})
 			tok.Wait()
 			if tok.Error() != nil {

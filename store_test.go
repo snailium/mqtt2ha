@@ -1,8 +1,11 @@
 package main
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -13,6 +16,10 @@ func openTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+func openRawDB(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", path)
 }
 
 func TestDeviceLifecycle(t *testing.T) {

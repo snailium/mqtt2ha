@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// DiscoveryMsg is the HA MQTT discovery configuration message for one sensor.
+// DiscoveryMsg is the HA MQTT discovery configuration message for one entity.
 type DiscoveryMsg struct {
 	Name              string          `json:"name"`
 	StateTopic        string          `json:"state_topic"`
@@ -13,10 +13,26 @@ type DiscoveryMsg struct {
 	UniqueID          string          `json:"unique_id"`
 	DeviceClass       string          `json:"device_class,omitempty"`
 	UnitOfMeasurement string          `json:"unit_of_measurement,omitempty"`
+	StateClass        string          `json:"state_class,omitempty"`
+	PayloadOn         string          `json:"payload_on,omitempty"`
+	PayloadOff        string          `json:"payload_off,omitempty"`
 	Icon              string          `json:"icon,omitempty"`
 	Device            DiscoveryDevice `json:"device"`
 	AvailabilityTopic string          `json:"availability_topic,omitempty"`
 	AvailabilityTpl   string          `json:"availability_template,omitempty"`
+}
+
+// valueTemplateFor builds the value_template expression for a field,
+// handling both flat JSON and Telegraf's nested {"fields":{...}} format.
+func valueTemplateFor(field string) string {
+	return fmt.Sprintf("{{ value_json.fields.%s | default(value_json.%s) }}", field, field)
+}
+
+// binaryValueTemplate normalizes any of the common on/off-ish payload values
+// to "ON"/"OFF" so HA's binary_sensor state stays clean.
+func binaryValueTemplate(field string) string {
+	on := `['true','1','on','open','yes','occupied','motion','detected','connected','online','alarm','ok','warning','error','critical']`
+	return fmt.Sprintf("{{ 'ON' if value_json.fields.%s | default(value_json.%s) in %s else 'OFF' }}", field, field, on)
 }
 
 // DiscoveryDevice is the device block inside a discovery message.
@@ -55,22 +71,20 @@ func entityUniqueID(dev *Device, ent Entity) string {
 }
 
 // BuildDiscovery builds the discovery JSON for one entity of a device.
-// Returns the discovery topic (homeassistant/sensor/<unique_id>/config) and payload.
+// Returns the discovery topic (homeassistant/<component>/<unique_id>/config) and payload.
 func BuildDiscovery(dev *Device, ent Entity, dataTopic string) (string, []byte, error) {
 	uid := entityUniqueID(dev, ent)
-
-	// value_template must handle both flat JSON and Telegraf's nested
-	// {"fields":{...}} format: prefer fields.<field>, fall back to <field>.
-	vt := fmt.Sprintf("{{ value_json.fields.%s | default(value_json.%s) }}", ent.Field, ent.Field)
+	component := ent.Component
+	if component == "" {
+		component = ComponentSensor
+	}
 
 	msg := DiscoveryMsg{
-		Name:              ent.Name,
-		StateTopic:        dataTopic,
-		ValueTemplate:     vt,
-		UniqueID:          uid,
-		DeviceClass:       ent.DeviceClass,
-		UnitOfMeasurement: ent.Unit,
-		Icon:              ent.Icon,
+		Name:        ent.Name,
+		StateTopic:  dataTopic,
+		UniqueID:    uid,
+		DeviceClass: ent.DeviceClass,
+		Icon:        ent.Icon,
 		Device: DiscoveryDevice{
 			Identifiers:  []string{deviceKey(dev.Topic)},
 			Name:         dev.Name,
@@ -80,10 +94,25 @@ func BuildDiscovery(dev *Device, ent Entity, dataTopic string) (string, []byte, 
 		},
 	}
 
+	switch component {
+	case ComponentBinarySensor:
+		// normalize payload to ON/OFF and let HA match against it
+		msg.ValueTemplate = binaryValueTemplate(ent.Field)
+		msg.PayloadOn = "ON"
+		msg.PayloadOff = "OFF"
+	default: // sensor
+		msg.ValueTemplate = valueTemplateFor(ent.Field)
+		msg.UnitOfMeasurement = ent.Unit
+		if ent.Unit != "" {
+			// state_class enables HA statistics/history for numeric sensors
+			msg.StateClass = "measurement"
+		}
+	}
+
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return "", nil, err
 	}
-	topic := fmt.Sprintf("%s/sensor/%s/config", "homeassistant", uid)
+	topic := fmt.Sprintf("%s/%s/%s/config", "homeassistant", component, uid)
 	return topic, payload, nil
 }

@@ -31,12 +31,13 @@ type Device struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// Entity is one sensor entity under a device.
+// Entity is one entity under a device (sensor, binary_sensor, ...).
 type Entity struct {
 	ID          int64  `json:"id"`
 	DeviceID    int64  `json:"device_id"`
 	Field       string `json:"field"`
 	Name        string `json:"name"`
+	Component   string `json:"component"` // "sensor" (default) or "binary_sensor"
 	DeviceClass string `json:"device_class,omitempty"`
 	Unit        string `json:"unit,omitempty"`
 	Icon        string `json:"icon,omitempty"`
@@ -83,6 +84,7 @@ func (s *Store) migrate() error {
 			device_id INTEGER NOT NULL,
 			field TEXT NOT NULL,
 			name TEXT NOT NULL DEFAULT '',
+			component TEXT NOT NULL DEFAULT 'sensor',
 			device_class TEXT NOT NULL DEFAULT '',
 			unit TEXT NOT NULL DEFAULT '',
 			icon TEXT NOT NULL DEFAULT '',
@@ -97,6 +99,16 @@ func (s *Store) migrate() error {
 	for _, st := range stmts {
 		if _, err := s.db.Exec(st); err != nil {
 			return fmt.Errorf("migrate: %w", err)
+		}
+	}
+	// M3: add entity.component column to existing databases (idempotent)
+	var hasComp int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name='component'`).Scan(&hasComp); err != nil {
+		return fmt.Errorf("migrate check component: %w", err)
+	}
+	if hasComp == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE entities ADD COLUMN component TEXT NOT NULL DEFAULT 'sensor'`); err != nil {
+			return fmt.Errorf("migrate add component: %w", err)
 		}
 	}
 	return nil
@@ -230,10 +242,13 @@ func (s *Store) ReplaceEntities(deviceID int64, ents []Entity) error {
 	}
 	for _, e := range ents {
 		e.DeviceID = deviceID
+		if e.Component == "" {
+			e.Component = ComponentSensor
+		}
 		_, err := tx.Exec(`
-			INSERT INTO entities (device_id, field, name, device_class, unit, icon, enabled)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			e.DeviceID, e.Field, e.Name, e.DeviceClass, e.Unit, e.Icon, e.Enabled)
+			INSERT INTO entities (device_id, field, name, component, device_class, unit, icon, enabled)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.DeviceID, e.Field, e.Name, e.Component, e.DeviceClass, e.Unit, e.Icon, e.Enabled)
 		if err != nil {
 			return err
 		}
@@ -244,7 +259,7 @@ func (s *Store) ReplaceEntities(deviceID int64, ents []Entity) error {
 // ListEntities returns all entities for a device.
 func (s *Store) ListEntities(deviceID int64) ([]Entity, error) {
 	rows, err := s.db.Query(`
-		SELECT id, device_id, field, name, device_class, unit, icon, enabled
+		SELECT id, device_id, field, name, component, device_class, unit, icon, enabled
 		FROM entities WHERE device_id=? ORDER BY id`, deviceID)
 	if err != nil {
 		return nil, err
@@ -253,7 +268,7 @@ func (s *Store) ListEntities(deviceID int64) ([]Entity, error) {
 	var out []Entity
 	for rows.Next() {
 		var e Entity
-		if err := rows.Scan(&e.ID, &e.DeviceID, &e.Field, &e.Name, &e.DeviceClass, &e.Unit, &e.Icon, &e.Enabled); err != nil {
+		if err := rows.Scan(&e.ID, &e.DeviceID, &e.Field, &e.Name, &e.Component, &e.DeviceClass, &e.Unit, &e.Icon, &e.Enabled); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -341,10 +356,13 @@ func (s *Store) ImportSnapshot(devs []Device, entsByDevice map[int64][]Entity, b
 			return err
 		}
 		for _, e := range entsByDevice[d.ID] {
+			if e.Component == "" {
+				e.Component = ComponentSensor
+			}
 			if _, err := tx.Exec(`
-				INSERT INTO entities (device_id, field, name, device_class, unit, icon, enabled)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				d.ID, e.Field, e.Name, e.DeviceClass, e.Unit, e.Icon, e.Enabled); err != nil {
+				INSERT INTO entities (device_id, field, name, component, device_class, unit, icon, enabled)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				d.ID, e.Field, e.Name, e.Component, e.DeviceClass, e.Unit, e.Icon, e.Enabled); err != nil {
 				return err
 			}
 		}

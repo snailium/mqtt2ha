@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          ext=""
+          if [ "${{ matrix.os }}" = "windows" ]; then ext=".exe"; fi
+          CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} \
+            go build -trimpath -ldflags "-s -w" \
+            -o mqtt2ha-${{ matrix.os }}-${{ matrix.arch }}$ext .
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mqtt2ha-*
+          generate_release_notes: true

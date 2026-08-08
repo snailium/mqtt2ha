@@ -86,14 +86,57 @@ func isUsableValue(v any) bool {
 	}
 }
 
+// Component constants (HA MQTT component names).
+const (
+	ComponentSensor       = "sensor"
+	ComponentBinarySensor = "binary_sensor"
+)
+
 // guessEntity infers HA entity attributes from a field name + value.
 func guessEntity(field string, v any) Entity {
 	e := Entity{
-		Field:   field,
-		Name:    field,
-		Enabled: true,
+		Field:     field,
+		Name:      field,
+		Component: ComponentSensor,
+		Enabled:   true,
 	}
 	lower := strings.ToLower(field)
+
+	// boolean / on-off-ish values -> binary_sensor
+	if _, ok := v.(bool); ok {
+		e.Component = ComponentBinarySensor
+		e.Icon = "mdi:power"
+		return e
+	}
+	if s, ok := v.(string); ok {
+		ls := strings.ToLower(s)
+		switch ls {
+		case "on", "off", "open", "closed", "true", "false", "yes", "no",
+			"occupied", "unoccupied", "motion", "no_motion", "detected", "not_detected",
+			"connected", "disconnected", "online", "offline", "alarm", "normal",
+			"ok", "error", "warning", "critical":
+			e.Component = ComponentBinarySensor
+			e.Icon = "mdi:power"
+			// device_class from the field name
+			switch {
+			case strings.Contains(lower, "motion"):
+				e.DeviceClass = "motion"
+			case strings.Contains(lower, "door"):
+				e.DeviceClass = "door"
+			case strings.Contains(lower, "window"):
+				e.DeviceClass = "window"
+			case strings.Contains(lower, "occup"):
+				e.DeviceClass = "occupancy"
+			case strings.Contains(lower, "moisture") || strings.Contains(lower, "wet"):
+				e.DeviceClass = "moisture"
+			case strings.Contains(lower, "connect"):
+				e.DeviceClass = "connectivity"
+			case strings.Contains(lower, "presence") || strings.Contains(lower, "motion"):
+				e.DeviceClass = "presence"
+			}
+			return e
+		}
+	}
 
 	// numeric?
 	if isNumeric(v) {
@@ -119,6 +162,24 @@ func guessEntity(field string, v any) Entity {
 		case strings.Contains(lower, "temp"):
 			e.DeviceClass = "temperature"
 			e.Unit = "°C"
+		case strings.Contains(lower, "humid"):
+			e.DeviceClass = "humidity"
+			e.Unit = "%"
+		case strings.Contains(lower, "pressure") || strings.Contains(lower, "press"):
+			e.DeviceClass = "pressure"
+			e.Unit = "hPa"
+		case strings.Contains(lower, "current") || strings.Contains(lower, "amp"):
+			e.DeviceClass = "current"
+			e.Unit = "A"
+		case strings.Contains(lower, "energy") || strings.Contains(lower, "kwh") || strings.Contains(lower, "wh"):
+			e.DeviceClass = "energy"
+			e.Unit = "kWh"
+		case strings.Contains(lower, "signal") || strings.Contains(lower, "rssi"):
+			e.DeviceClass = "signal_strength"
+			e.Unit = "dBm"
+		case strings.Contains(lower, "illumin") || strings.Contains(lower, "lux"):
+			e.DeviceClass = "illuminance"
+			e.Unit = "lx"
 		}
 	} else {
 		// string values: status fields

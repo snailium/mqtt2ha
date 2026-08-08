@@ -119,3 +119,136 @@ func TestSanitize(t *testing.T) {
 		}
 	}
 }
+
+// ---- M3: binary_sensor + extended inference ----
+
+func TestGuessEntityBinarySensor(t *testing.T) {
+	// bool value -> binary_sensor
+	e := guessEntity("occupancy", true)
+	if e.Component != ComponentBinarySensor {
+		t.Errorf("bool field component = %q, want binary_sensor", e.Component)
+	}
+
+	// on/off-ish string values -> binary_sensor
+	bin := []struct{ field, val string }{
+		{"door_contact", "open"}, {"motion_detected", "motion"},
+		{"window_status", "closed"}, {"occupied", "occupied"},
+		{"link_quality", "connected"}, {"alarm_state", "alarm"},
+	}
+	for _, c := range bin {
+		e = guessEntity(c.field, c.val)
+		if e.Component != ComponentBinarySensor {
+			t.Errorf("guessEntity(%q, %q) component = %q, want binary_sensor", c.field, c.val, e.Component)
+		}
+	}
+
+	// device_class from field name
+	if e := guessEntity("motion_detected", "motion"); e.DeviceClass != "motion" {
+		t.Errorf("motion device_class = %q", e.DeviceClass)
+	}
+	if e := guessEntity("door_contact", "open"); e.DeviceClass != "door" {
+		t.Errorf("door device_class = %q", e.DeviceClass)
+	}
+	if e := guessEntity("occupied", "occupied"); e.DeviceClass != "occupancy" {
+		t.Errorf("occupancy device_class = %q", e.DeviceClass)
+	}
+
+	// plain strings stay sensor
+	e = guessEntity("firmware", "1.2.3")
+	if e.Component != ComponentSensor {
+		t.Errorf("plain string component = %q, want sensor", e.Component)
+	}
+}
+
+func TestGuessEntityMoreClasses(t *testing.T) {
+	cases := []struct {
+		field string
+		dc    string
+		unit  string
+	}{
+		{"humidity", "humidity", "%"},
+		{"air_pressure", "pressure", "hPa"},
+		{"battery_current", "current", "A"},
+		{"daily_energy", "energy", "kWh"},
+		{"wifi_signal", "signal_strength", "dBm"},
+		{"light_lux", "illuminance", "lx"},
+	}
+	for _, c := range cases {
+		e := guessEntity(c.field, 1.0)
+		if e.DeviceClass != c.dc || e.Unit != c.unit {
+			t.Errorf("guessEntity(%q) = dc=%q unit=%q, want dc=%q unit=%q",
+				c.field, e.DeviceClass, e.Unit, c.dc, c.unit)
+		}
+	}
+}
+
+func TestBuildDiscoveryBinarySensor(t *testing.T) {
+	dev := &Device{Topic: "home/sensors/room1", Name: "room1"}
+	ent := Entity{Field: "motion_detected", Name: "motion_detected", Component: ComponentBinarySensor, DeviceClass: "motion"}
+
+	topic, payload, err := BuildDiscovery(dev, ent, dev.Topic)
+	if err != nil {
+		t.Fatalf("BuildDiscovery: %v", err)
+	}
+	if !strings.Contains(topic, "/binary_sensor/") {
+		t.Errorf("binary_sensor topic wrong: %s", topic)
+	}
+	body := string(payload)
+	if !strings.Contains(body, `"payload_on":"ON"`) || !strings.Contains(body, `"payload_off":"OFF"`) {
+		t.Errorf("payload_on/off missing: %s", body)
+	}
+	if !strings.Contains(body, `value_json.fields.motion_detected`) {
+		t.Errorf("binary value_template missing: %s", body)
+	}
+	// binary_sensor must NOT carry unit_of_measurement
+	if strings.Contains(body, "unit_of_measurement") {
+		t.Errorf("binary_sensor should not have unit: %s", body)
+	}
+}
+
+func TestBuildDiscoverySensorStateClass(t *testing.T) {
+	dev := &Device{Topic: "home/ups/ups", Name: "ups"}
+	ent := Entity{Field: "battery_voltage", Name: "battery_voltage", DeviceClass: "voltage", Unit: "V"}
+
+	_, payload, err := BuildDiscovery(dev, ent, dev.Topic)
+	if err != nil {
+		t.Fatalf("BuildDiscovery: %v", err)
+	}
+	body := string(payload)
+	if !strings.Contains(body, `"state_class":"measurement"`) {
+		t.Errorf("sensor state_class missing: %s", body)
+	}
+	if !strings.Contains(body, `"unit_of_measurement":"V"`) {
+		t.Errorf("unit missing: %s", body)
+	}
+}
+
+func TestMigrationAddsComponentColumn(t *testing.T) {
+	// simulate a pre-M3 database: entities table without component column
+	db, err := openRawDB(t.TempDir() + "/old.db")
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	db.Exec(`CREATE TABLE entities (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		device_id INTEGER NOT NULL,
+		field TEXT NOT NULL,
+		name TEXT NOT NULL DEFAULT '',
+		device_class TEXT NOT NULL DEFAULT '',
+		unit TEXT NOT NULL DEFAULT '',
+		icon TEXT NOT NULL DEFAULT '',
+		enabled INTEGER NOT NULL DEFAULT 1,
+		UNIQUE(device_id, field))`)
+	db.Close()
+
+	s, err := OpenStore(t.TempDir() + "/old.db")
+	_ = s
+	if err != nil {
+		t.Fatalf("OpenStore on old db: %v", err)
+	}
+	var hasComp int
+	s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name='component'`).Scan(&hasComp)
+	if hasComp == 0 {
+		t.Error("component column not added by migration")
+	}
+}

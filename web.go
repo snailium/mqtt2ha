@@ -80,6 +80,10 @@ code{background:#eee;padding:1px 4px}
   <div class="entity-row">
   <form method="post" action="/api/entity/{{$e.ID}}">
     <code>{{$e.Field}}</code>
+    <select name="component">
+      <option value="sensor" {{if eq $e.Component "sensor"}}selected{{end}}>sensor</option>
+      <option value="binary_sensor" {{if eq $e.Component "binary_sensor"}}selected{{end}}>binary</option>
+    </select>
     <input type="text" name="name" value="{{$e.Name}}">
     <input type="text" name="device_class" value="{{$e.DeviceClass}}" placeholder="class">
     <input type="text" name="unit" value="{{$e.Unit}}" placeholder="unit" size="4">
@@ -242,6 +246,10 @@ func (b *Bridge) handleEntityUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ent.Name = r.FormValue("name")
+	ent.Component = r.FormValue("component")
+	if ent.Component == "" {
+		ent.Component = ComponentSensor
+	}
 	ent.DeviceClass = r.FormValue("device_class")
 	ent.Unit = r.FormValue("unit")
 	ent.Icon = r.FormValue("icon")
@@ -292,6 +300,7 @@ func (b *Bridge) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
 type exportEntity struct {
 	Field       string `json:"field"`
 	Name        string `json:"name"`
+	Component   string `json:"component,omitempty"`
 	DeviceClass string `json:"device_class,omitempty"`
 	Unit        string `json:"unit,omitempty"`
 	Icon        string `json:"icon,omitempty"`
@@ -338,8 +347,9 @@ func (b *Bridge) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, e := range ents {
 			ed.Entities = append(ed.Entities, exportEntity{
-				Field: e.Field, Name: e.Name, DeviceClass: e.DeviceClass,
-				Unit: e.Unit, Icon: e.Icon, Enabled: e.Enabled,
+				Field: e.Field, Name: e.Name, Component: e.Component,
+				DeviceClass: e.DeviceClass,
+				Unit:        e.Unit, Icon: e.Icon, Enabled: e.Enabled,
 			})
 		}
 		out.Devices = append(out.Devices, ed)
@@ -380,8 +390,9 @@ func (b *Bridge) handleImport(w http.ResponseWriter, r *http.Request) {
 		})
 		for _, e := range d.Entities {
 			ents[d.ID] = append(ents[d.ID], Entity{
-				Field: e.Field, Name: e.Name, DeviceClass: e.DeviceClass,
-				Unit: e.Unit, Icon: e.Icon, Enabled: e.Enabled,
+				Field: e.Field, Name: e.Name, Component: e.Component,
+				DeviceClass: e.DeviceClass,
+				Unit:        e.Unit, Icon: e.Icon, Enabled: e.Enabled,
 			})
 		}
 	}
