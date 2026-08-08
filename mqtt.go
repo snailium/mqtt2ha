@@ -254,6 +254,8 @@ func (b *Bridge) onData(_ mqtt.Client, msg mqtt.Message) {
 }
 
 // publishDevice publishes discovery messages for all entities of a device.
+// Enabled entities get full discovery (retained); disabled entities get an
+// empty retained payload so HA removes any previously published entity.
 func (b *Bridge) publishDevice(dev *Device) error {
 	ents, err := b.store.ListEntities(dev.ID)
 	if err != nil {
@@ -261,6 +263,15 @@ func (b *Bridge) publishDevice(dev *Device) error {
 	}
 	for _, e := range ents {
 		if !e.Enabled {
+			// clear any previously published discovery for this entity
+			uid := entityUniqueID(dev, e)
+			topic := fmt.Sprintf("%s/sensor/%s/config", b.cfg.MQTT.DiscoveryPrefix, uid)
+			tok := b.client.Publish(topic, 1, true, []byte{})
+			tok.Wait()
+			if tok.Error() != nil {
+				return tok.Error()
+			}
+			log.Printf("cleared discovery %s (entity disabled)", topic)
 			continue
 		}
 		topic, payload, err := BuildDiscovery(dev, e, dev.Topic)

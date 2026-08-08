@@ -105,10 +105,10 @@ against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
 - **M1 — core (done):** observation window, auto mode, self-discovery
   detection, exact-topic blacklist, SQLite registry, Telegraf/flat JSON
   inference, unit tests.
-- **M2 — approval workflow (partial):** `approval` mode and a basic web UI
-  (list / approve / reject / blacklist / re-publish) exist. Not yet done:
-  per-entity enable/disable, editing inferred config before publishing,
-  config export/import.
+- **M2 — approval workflow (done):** `approval` mode, web UI (list /
+  approve / reject / blacklist / re-publish), per-entity enable/disable,
+  editing device/entity config before publishing (name, device_class, unit),
+  config export/import, blacklist management (add/remove).
 - **M3 — open-source hardening (not started):** components beyond `sensor`
   (binary_sensor, switch, …), more output formats, additional inference rules,
   CI publishing releases.
@@ -131,7 +131,7 @@ against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
 This project is a **human–AI collaboration**:
 
 - **Snailium** — product owner: requirements, deployment, live-environment validation
-- **Hermes Agent** (Nous Research) — design and implementation
+- **Hermes Agent** v0.19.1 (Nous Research) — design and implementation, running on DeepSeek-V4-Flash via opencode-go
 
 Developed and debugged against a live Home Assistant + mosquitto + Telegraf +
 Zigbee2MQTT stack (August 2026).

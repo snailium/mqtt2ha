@@ -181,6 +181,20 @@ func (s *Store) UpdateDeviceStatus(id int64, status string) error {
 	return err
 }
 
+// UpdateDeviceMeta updates editable device metadata (name/model/manufacturer/serial).
+func (s *Store) UpdateDeviceMeta(id int64, name, model, manufacturer, serial string) error {
+	_, err := s.db.Exec(`UPDATE devices SET name=?, model=?, manufacturer=?, serial=?, updated_at=? WHERE id=?`,
+		name, model, manufacturer, serial, time.Now(), id)
+	return err
+}
+
+// UpdateEntity updates editable entity attributes (M2: edit before publish).
+func (s *Store) UpdateEntity(id int64, e Entity) error {
+	_, err := s.db.Exec(`UPDATE entities SET name=?, device_class=?, unit=?, icon=?, enabled=? WHERE id=?`,
+		e.Name, e.DeviceClass, e.Unit, e.Icon, e.Enabled, id)
+	return err
+}
+
 // IncrementMsgCount adds 1 to msg_count for a device.
 func (s *Store) IncrementMsgCount(id int64) (int, error) {
 	res, err := s.db.Exec(`UPDATE devices SET msg_count=msg_count+1, updated_at=? WHERE id=?`, time.Now(), id)
@@ -276,6 +290,12 @@ func (s *Store) AddBlacklist(prefix string) error {
 	return err
 }
 
+// DeleteBlacklist removes a prefix from the blacklist.
+func (s *Store) DeleteBlacklist(prefix string) error {
+	_, err := s.db.Exec(`DELETE FROM blacklist WHERE prefix=?`, prefix)
+	return err
+}
+
 // ListBlacklist returns all blacklisted prefixes.
 func (s *Store) ListBlacklist() ([]string, error) {
 	rows, err := s.db.Query(`SELECT prefix FROM blacklist ORDER BY created_at`)
@@ -292,4 +312,47 @@ func (s *Store) ListBlacklist() ([]string, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// ImportSnapshot atomically replaces all devices, entities and blacklist
+// entries with the given snapshot (M2: config export/import).
+// Device IDs are preserved so entity device_id references stay valid.
+func (s *Store) ImportSnapshot(devs []Device, entsByDevice map[int64][]Entity, blacklist []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, q := range []string{
+		`DELETE FROM entities`,
+		`DELETE FROM devices`,
+		`DELETE FROM blacklist`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	for _, d := range devs {
+		if _, err := tx.Exec(`
+			INSERT INTO devices (id, topic, prefix, name, manufacturer, model, serial, status, msg_count, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			d.ID, d.Topic, d.Prefix, d.Name, d.Manufacturer, d.Model, d.Serial, d.Status, d.MsgCount, d.CreatedAt, d.UpdatedAt); err != nil {
+			return err
+		}
+		for _, e := range entsByDevice[d.ID] {
+			if _, err := tx.Exec(`
+				INSERT INTO entities (device_id, field, name, device_class, unit, icon, enabled)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				d.ID, e.Field, e.Name, e.DeviceClass, e.Unit, e.Icon, e.Enabled); err != nil {
+				return err
+			}
+		}
+	}
+	for _, p := range blacklist {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO blacklist (prefix, created_at) VALUES (?, ?)`, p, time.Now()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

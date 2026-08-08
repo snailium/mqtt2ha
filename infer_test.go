@@ -56,15 +56,15 @@ func TestGuessEntityNumeric(t *testing.T) {
 		dc    string
 		unit  string
 	}{
-		{"load_percent", "", "%"},                    // load is plain percentage
-		{"battery_charge_percent", "battery", "%"},   // charge/percent -> battery
-		{"battery_voltage", "voltage", "V"},          // voltage
-		{"battery_runtime_low", "duration", "s"},     // runtime -> duration
-		{"power_draw", "power", "W"},                 // power
-		{"nominal_power", "", ""},                    // nominal power excluded from device_class
-		{"temperature_gpu", "temperature", "°C"},     // temp
-		{"input_frequency", "frequency", "Hz"},       // frequency
-		{"ups_status", "", ""},                       // string status: no class
+		{"load_percent", "", "%"},                  // load is plain percentage
+		{"battery_charge_percent", "battery", "%"}, // charge/percent -> battery
+		{"battery_voltage", "voltage", "V"},        // voltage
+		{"battery_runtime_low", "duration", "s"},   // runtime -> duration
+		{"power_draw", "power", "W"},               // power
+		{"nominal_power", "", ""},                  // nominal power excluded from device_class
+		{"temperature_gpu", "temperature", "°C"},   // temp
+		{"input_frequency", "frequency", "Hz"},     // frequency
+		{"ups_status", "", ""},                     // string status: no class
 	}
 	for _, c := range cases {
 		e := guessEntity(c.field, 1.0)

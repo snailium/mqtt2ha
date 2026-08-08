@@ -47,10 +47,17 @@ func sanitize(s string) string {
 	return string(out)
 }
 
+// entityUniqueID builds the stable unique_id for one entity.
+// The "v2" prefix is load-bearing: HA caches discovery hashes by topic, so
+// bump it (v2→v3) to force HA to recreate entities from scratch.
+func entityUniqueID(dev *Device, ent Entity) string {
+	return fmt.Sprintf("mqtt2ha_v2_%s_%s", sanitize(dev.Topic), sanitize(ent.Field))
+}
+
 // BuildDiscovery builds the discovery JSON for one entity of a device.
 // Returns the discovery topic (homeassistant/sensor/<unique_id>/config) and payload.
 func BuildDiscovery(dev *Device, ent Entity, dataTopic string) (string, []byte, error) {
-	uid := fmt.Sprintf("mqtt2ha_v2_%s_%s", sanitize(dev.Topic), sanitize(ent.Field))
+	uid := entityUniqueID(dev, ent)
 
 	// value_template must handle both flat JSON and Telegraf's nested
 	// {"fields":{...}} format: prefer fields.<field>, fall back to <field>.
