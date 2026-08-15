@@ -141,7 +141,7 @@ func guessEntity(field string, v any) Entity {
 	// numeric?
 	if isNumeric(v) {
 		switch {
-		case strings.Contains(lower, "load"):
+		case strings.Contains(lower, "load") && !strings.Contains(lower, "watts") && !strings.Contains(lower, "power"):
 			// load is a plain percentage, not battery state of charge
 			e.Unit = "%"
 		case strings.Contains(lower, "voltage") || strings.HasSuffix(lower, "volt") || strings.HasSuffix(lower, "v"):
@@ -153,7 +153,7 @@ func guessEntity(field string, v any) Entity {
 		case strings.Contains(lower, "runtime") || strings.Contains(lower, "time_left") || strings.Contains(lower, "time"):
 			e.DeviceClass = "duration"
 			e.Unit = "s"
-		case strings.Contains(lower, "power") && !strings.Contains(lower, "nominal"):
+		case strings.Contains(lower, "watts") || strings.Contains(lower, "watt") || (strings.Contains(lower, "power") && !strings.Contains(lower, "nominal")):
 			e.DeviceClass = "power"
 			e.Unit = "W"
 		case strings.Contains(lower, "frequency") || strings.Contains(lower, "hz"):
