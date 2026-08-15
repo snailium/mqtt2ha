@@ -9,11 +9,13 @@ import (
 
 // Config is the top-level configuration for mqtt2ha.
 type Config struct {
-	MQTT    MQTTConfig `yaml:"mqtt"`
-	Mode    string     `yaml:"mode"`          // "auto" or "approval"
-	Observe int        `yaml:"observe_count"` // messages to observe before publishing in auto mode
-	DBPath  string     `yaml:"database"`
-	HTTP    string     `yaml:"http"` // web UI listen address, e.g. ":8080"
+	MQTT       MQTTConfig `yaml:"mqtt"`
+	Mode       string     `yaml:"mode"`          // "auto" or "approval"
+	Observe    int        `yaml:"observe_count"` // messages to observe before publishing in auto mode
+	DBPath     string     `yaml:"database"`
+	Backend    string     `yaml:"backend"`     // "sqlite" (default) or "yaml"
+	DevicesDir string     `yaml:"devices_dir"` // yaml backend: per-topic config files
+	HTTP       string     `yaml:"http"`        // web UI listen address, e.g. ":8080"
 }
 
 type MQTTConfig struct {
@@ -39,6 +41,7 @@ func DefaultConfig() *Config {
 		Mode:    "auto",
 		Observe: 3,
 		DBPath:  "mqtt2ha.db",
+		Backend: "sqlite",
 		HTTP:    ":8080",
 	}
 }

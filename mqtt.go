@@ -14,7 +14,7 @@ import (
 // Bridge is the core mqtt2ha engine.
 type Bridge struct {
 	cfg    *Config
-	store  *Store
+	store  Backend
 	client mqtt.Client
 
 	// discoveredIndex maps a node prefix (e.g. "zigbee2mqtt/") to whether
@@ -25,7 +25,7 @@ type Bridge struct {
 }
 
 // NewBridge creates a bridge from config + store.
-func NewBridge(cfg *Config, store *Store) *Bridge {
+func NewBridge(cfg *Config, store Backend) *Bridge {
 	return &Bridge{
 		cfg:         cfg,
 		store:       store,

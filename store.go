@@ -44,6 +44,29 @@ type Entity struct {
 	Enabled     bool   `json:"enabled"`
 }
 
+// Store is the persistence backend for devices, entities and blacklist.
+// Both SQLStore (SQLite) and YamlStore implement it; mqtt.go and web.go
+// depend only on this interface.
+type Backend interface {
+	Close() error
+	UpsertDevice(d *Device) (*Device, error)
+	GetDeviceByTopic(topic string) (*Device, error)
+	GetDeviceByID(id int64) (*Device, error)
+	ListDevices() ([]Device, error)
+	UpdateDeviceStatus(id int64, status string) error
+	UpdateDeviceMeta(id int64, name, model, manufacturer, serial string) error
+	UpdateEntity(id int64, e Entity) error
+	IncrementMsgCount(id int64) (int, error)
+	DeleteDevice(id int64) error
+	ReplaceEntities(deviceID int64, ents []Entity) error
+	ListEntities(deviceID int64) ([]Entity, error)
+	IsBlacklisted(topic string) (bool, error)
+	AddBlacklist(prefix string) error
+	DeleteBlacklist(prefix string) error
+	ListBlacklist() ([]string, error)
+	ImportSnapshot(devs []Device, entsByDevice map[int64][]Entity, blacklist []string) error
+}
+
 // Store wraps the SQLite database.
 type Store struct {
 	db *sql.DB

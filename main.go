@@ -16,9 +16,20 @@ func main() {
 		cfg = DefaultConfig()
 	}
 
-	store, err := OpenStore(cfg.DBPath)
-	if err != nil {
-		log.Fatalf("open store: %v", err)
+	var store Backend
+	if cfg.Backend == "yaml" {
+		st, err := NewYamlStore(cfg.DevicesDir)
+		if err != nil {
+			log.Fatalf("open yaml store: %v", err)
+		}
+		store = st
+		log.Printf("backend: yaml (devices_dir=%s)", cfg.DevicesDir)
+	} else {
+		st, err := OpenStore(cfg.DBPath)
+		if err != nil {
+			log.Fatalf("open store: %v", err)
+		}
+		store = st
 	}
 	defer store.Close()
 

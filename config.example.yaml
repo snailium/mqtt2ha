@@ -14,5 +14,10 @@ mqtt:
 mode: "auto"
 observe_count: 3
 database: "mqtt2ha.db"
+# persistence backend: "sqlite" (default, backward compatible) or "yaml"
+# yaml = one config file per MQTT topic under devices_dir, human-editable,
+#        git-friendly; msg_count kept in memory only (resets on restart)
+backend: "sqlite"
+devices_dir: "devices"
 # web UI listen address; empty string disables the UI
 http: ":8080"
