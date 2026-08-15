@@ -172,6 +172,25 @@ func TestYamlStoreImportSnapshot(t *testing.T) {
 	}
 }
 
+func TestYamlStoreOverrideMerge(t *testing.T) {
+	s := newTestYamlStore(t)
+	d, _ := s.UpsertDevice(&Device{Topic: "home/ups/ov"})
+	// 用户编辑：load_watts unit=W（yaml 权威）
+	user := []Entity{{Field: "load_watts", Name: "Load (W)", Component: "sensor", DeviceClass: "power", Unit: "W", Enabled: true}}
+	if err := s.ReplaceEntities(d.ID, user); err != nil {
+		t.Fatalf("ReplaceEntities (user): %v", err)
+	}
+	// 推断结果（unit=% 的旧 bug 行为）——不应覆盖 yaml
+	inferred := []Entity{{Field: "load_watts", Component: "sensor", Unit: "%", Enabled: true}}
+	if err := s.ReplaceEntities(d.ID, inferred); err != nil {
+		t.Fatalf("ReplaceEntities (inferred): %v", err)
+	}
+	ents, _ := s.ListEntities(d.ID)
+	if len(ents) != 1 || ents[0].Unit != "W" || ents[0].Name != "Load (W)" || ents[0].DeviceClass != "power" {
+		t.Fatalf("override merge failed: %+v", ents)
+	}
+}
+
 func TestSanitizeTopic(t *testing.T) {
 	if got := sanitizeTopic("home/ups/ai-server-ups"); got != "home_ups_ai-server-ups" {
 		t.Fatalf("sanitize: %q", got)

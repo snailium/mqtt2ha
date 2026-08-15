@@ -378,17 +378,53 @@ func (s *YamlStore) ReplaceEntities(deviceID int64, ents []Entity) error {
 	if d == nil {
 		return errNotFound(fmt.Sprintf("device id %d", deviceID))
 	}
-	for i := range ents {
-		ents[i].ID = int64(i + 1)
+	// Override merge: the yaml file is the authoritative config. For every
+	// inferred entity, keep user-edited attributes from the yaml file when
+	// they are non-empty (or differ from the inferred default).
+	existing := s.entities[deviceID]
+	merged := make([]Entity, 0, len(ents))
+	for _, e := range ents {
+		if old, ok := findEntity(existing, e.Field); ok {
+			if old.Name != "" {
+				e.Name = old.Name
+			}
+			if old.Unit != "" {
+				e.Unit = old.Unit
+			}
+			if old.DeviceClass != "" {
+				e.DeviceClass = old.DeviceClass
+			}
+			if old.Icon != "" {
+				e.Icon = old.Icon
+			}
+			e.Enabled = old.Enabled
+			// component: yaml wins unless it's the default we would infer anyway
+			if old.Component != "" && old.Component != ComponentSensor {
+				e.Component = old.Component
+			}
+		}
+		merged = append(merged, e)
+	}
+	for i := range merged {
+		merged[i].ID = int64(i + 1)
 	}
 	// Hash compare — only write to disk when the set actually changed.
-	h := hashEntities(ents)
+	h := hashEntities(merged)
 	if h == s.entsHash[deviceID] {
 		return nil
 	}
-	s.entities[deviceID] = ents
+	s.entities[deviceID] = merged
 	s.entsHash[deviceID] = h
 	return s.saveDevice(d)
+}
+
+func findEntity(ents []Entity, field string) (Entity, bool) {
+	for _, e := range ents {
+		if e.Field == field {
+			return e, true
+		}
+	}
+	return Entity{}, false
 }
 
 func (s *YamlStore) ListEntities(deviceID int64) ([]Entity, error) {
