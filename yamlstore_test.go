@@ -80,10 +80,11 @@ func TestYamlStoreReplaceEntitiesHashNoWrite(t *testing.T) {
 	if !stat1.ModTime().Equal(stat2.ModTime()) {
 		t.Fatal("file rewritten despite identical entity set (no hash compare)")
 	}
-	// 变化后才写
-	ents2 := []Entity{{Field: "a", Name: "A", Component: "sensor", Unit: "W"}}
+	// 字段集合变化（新增）才写盘
+	ents2 := []Entity{{Field: "a", Name: "A", Component: "sensor", Unit: "%"},
+		{Field: "b", Name: "B", Component: "sensor", Unit: "V"}}
 	if err := s.ReplaceEntities(d.ID, ents2); err != nil {
-		t.Fatalf("ReplaceEntities (changed): %v", err)
+		t.Fatalf("ReplaceEntities (added field): %v", err)
 	}
 	stat3, _ := os.Stat(f)
 	if stat2.ModTime().Equal(stat3.ModTime()) {
