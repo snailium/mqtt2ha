@@ -86,6 +86,49 @@ mqtt:
   broker: "localhost:1883"
   username: "mqtt_user"
   password: "change-me"
+  subscribe: ["#"]
+  discovery_prefix: "homeassistant"
+mode: "auto"          # "auto" or "approval"
+observe_count: 3
+database: "mqtt2ha.db"
+backend: "sqlite"     # "sqlite" (default) or "yaml"
+devices_dir: "devices"
+http: ":8080"
+```
+
+### YAML backend (per-topic config files)
+
+`backend: "yaml"` stores one human-editable config file per MQTT topic under
+`devices_dir`, e.g. `devices/home_ups_ai-server-ups.yaml`:
+
+```yaml
+id: 42
+topic: home/ups/ai-server-ups
+status: approved
+name: ai-server-ups
+model: CP1000PFCLCD
+entities:
+- field: load_watts
+  name: Load (W)          # override: wins over inference
+  component: sensor
+  device_class: power     # override
+  unit: W                 # override
+  icon: ''
+  enabled: true
+```
+
+- The yaml file is **authoritative**: non-empty entity attributes override
+  inference results; empty ones fall back to inference.
+- `msg_count` lives in memory only (diagnostic counter, resets on restart);
+  `status` is persisted back to the file.
+- Entity-set writes are hash-compared — zero disk writes when nothing changed.
+- Migrate from SQLite with `scripts/mqtt2ha_sqlite2yaml.py mqtt2ha.db devices`.
+
+```yaml
+mqtt:
+  broker: "localhost:1883"
+  username: "mqtt_user"
+  password: "change-me"
   subscribe: ["#"]            # data topics to watch (default: everything)
   discovery_prefix: "homeassistant"   # HA discovery prefix
   keep_alive: 30
