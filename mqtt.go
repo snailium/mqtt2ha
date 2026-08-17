@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -79,42 +80,56 @@ func (b *Bridge) watchConfig() {
 	defer watcher.Close()
 	log.Printf("hot-reload watching: %s", dir)
 
-	// coalesce bursts of (write,write,...) from editors by keying on filename
-	pending := map[string]time.Time{}
-	var flush = func() {
-		for name, at := range pending {
-			if !strings.HasSuffix(name, ".yaml") || name == "blacklist.yaml" {
-				delete(pending, name)
+	// Periodic scan (every 5s) catches content edits, which fsnotify's
+	// directory watch cannot (it only sees create/rename/delete of entries).
+	// ReloadDevice is hash-idempotent, so fsnotify + scan can coexist safely.
+	lastScan := map[string]time.Time{}
+	scan := func() {
+		devs, _ := b.store.ListDevices()
+		for _, d := range devs {
+			if d.Status != StatusApproved {
 				continue
 			}
-			topic := ys.topicForFile(filepath.Join(dir, name))
-			if topic == "" {
-				delete(pending, name)
-				continue
-			}
-			changed, err := ys.ReloadDevice(topic)
+			fp := ys.fileFor(d.Topic)
+			fi, err := os.Stat(fp)
 			if err != nil {
-				log.Printf("reload %s: %v", name, err)
-				delete(pending, name)
+				lastScan[fp] = time.Time{}
 				continue
 			}
-			delete(pending, name)
-			dev, err := b.store.GetDeviceByTopic(topic)
+			prev, seen := lastScan[fp]
+			lastScan[fp] = fi.ModTime()
+			if !seen || prev.Equal(fi.ModTime()) {
+				continue
+			}
+			changed, err := ys.ReloadDevice(d.Topic)
 			if err != nil {
+				log.Printf("hot-reload scan %s: %v", d.Topic, err)
 				continue
 			}
-			if changed && dev.Status == StatusApproved {
-				if err := b.publishDevice(dev); err != nil {
-					log.Printf("re-publish %s: %v", topic, err)
+			if changed {
+				if err := b.publishDevice(&d); err != nil {
+					log.Printf("hot-reload scan re-publish %s: %v", d.Topic, err)
 				} else {
-					log.Printf("hot-reload: re-published discovery %s", topic)
+					log.Printf("hot-reload(scan): re-published discovery %s", d.Topic)
 				}
-			} else if changed {
-				log.Printf("hot-reload: %s changed (status=%s, skip)", topic, dev.Status)
 			}
-			_ = at
 		}
 	}
+	scanDir := func() {
+		// seed scan so only *changes* are reported, not the whole config
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".yaml") {
+				if fi, err := e.Info(); err == nil {
+					lastScan[filepath.Join(dir, e.Name())] = fi.ModTime()
+				}
+			}
+		}
+	}
+	scanDir()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case ev, ok := <-watcher.Events:
@@ -122,11 +137,11 @@ func (b *Bridge) watchConfig() {
 				return
 			}
 			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) != 0 {
-				pending[filepath.Base(ev.Name)] = time.Now()
-				// debounce: wait for editor to finish writing
-				time.Sleep(300 * time.Millisecond)
-				flush()
+				time.Sleep(300 * time.Millisecond) // debounce editor writes
+				scan()
 			}
+		case <-ticker.C:
+			scan()
 		case _, ok := <-watcher.Errors:
 			if !ok {
 				return
