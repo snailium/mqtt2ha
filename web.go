@@ -14,6 +14,7 @@ import (
 func (b *Bridge) RegisterWeb(mux *http.ServeMux) {
 	mux.HandleFunc("/", b.handleIndex)
 	mux.HandleFunc("/api/devices", b.handleAPI)
+	mux.HandleFunc("/api/reload", b.handleReload)
 	mux.HandleFunc("/approve/", b.handleApprove)
 	mux.HandleFunc("/reject/", b.handleReject)
 	mux.HandleFunc("/blacklist/", b.handleBlacklist)
@@ -135,6 +136,55 @@ func (b *Bridge) handleIndex(w http.ResponseWriter, r *http.Request) {
 		data.Devices = append(data.Devices, devView{Device: d, Entities: ents})
 	}
 	_ = indexTpl.Execute(w, data)
+}
+
+// handleReload manually re-reads all device yaml files and re-publishes
+// discovery for any whose entity set changed ("update instead of delete").
+// Trigger after editing files in devices_dir.
+func (b *Bridge) handleReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	n, err := b.ReloadAll()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"reloaded": n})
+}
+
+// ReloadAll re-reads every device yaml file and re-publishes discovery for any
+// whose entity set changed. Returns the number of discovery sets re-published.
+func (b *Bridge) ReloadAll() (int, error) {
+	devs, err := b.store.ListDevices()
+	if err != nil {
+		return 0, err
+	}
+	republished := 0
+	for idx := range devs {
+		d := &devs[idx]
+		changed, err := b.store.ReloadDevice(d.Topic)
+		if err != nil {
+			log.Printf("reload %s: %v", d.Topic, err)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		if d.Status != StatusApproved {
+			log.Printf("reloaded %s (status=%s, skipped publish)", d.Topic, d.Status)
+			continue
+		}
+		if err := b.publishDevice(d); err != nil {
+			log.Printf("reload re-publish %s: %v", d.Topic, err)
+		} else {
+			republished++
+			log.Printf("/api/reload re-published discovery: %s", d.Topic)
+		}
+	}
+	return republished, nil
 }
 
 func (b *Bridge) handleAPI(w http.ResponseWriter, r *http.Request) {
