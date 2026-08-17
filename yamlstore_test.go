@@ -192,6 +192,59 @@ func TestYamlStoreOverrideMerge(t *testing.T) {
 	}
 }
 
+func TestYamlStoreReplaceEntitiesWithChange(t *testing.T) {
+	s := newTestYamlStore(t)
+	d, _ := s.UpsertDevice(&Device{Topic: "home/ups/chg"})
+	ents := []Entity{{Field: "a", Component: "sensor", Unit: "%"}}
+	changed, err := s.ReplaceEntitiesWithChange(d.ID, ents)
+	if err != nil || !changed {
+		t.Fatalf("first change: changed=%v err=%v", changed, err)
+	}
+	// 相同集合 → 不变化（不重发）
+	changed, _ = s.ReplaceEntitiesWithChange(d.ID, ents)
+	if changed {
+		t.Fatal("identical set should report no change")
+	}
+	// 推断变化（%→W）被 yaml override 冻结后可能无变化——这里直接改集合验证
+	ents2 := []Entity{{Field: "a", Component: "sensor", Unit: "W"}}
+	changed, _ = s.ReplaceEntitiesWithChange(d.ID, ents2)
+	if changed {
+		t.Fatal("unit change should be frozen by yaml override (same field) -> no change")
+	}
+	// 新增字段 → 变化
+	ents3 := []Entity{{Field: "a", Component: "sensor", Unit: "W"}, {Field: "b", Component: "sensor", Unit: "V"}}
+	changed, _ = s.ReplaceEntitiesWithChange(d.ID, ents3)
+	if !changed {
+		t.Fatal("added field should report change")
+	}
+}
+
+func TestYamlStoreReloadDevice(t *testing.T) {
+	s := newTestYamlStore(t)
+	d, _ := s.UpsertDevice(&Device{Topic: "home/ups/rl"})
+	s.ReplaceEntities(d.ID, []Entity{{Field: "a", Component: "sensor", Unit: "%", Enabled: true}})
+
+	// 改完成文件（模拟用户编辑 override：unit %->W + 新增字段）
+	f := s.fileFor("home/ups/rl")
+	err := os.WriteFile(f, []byte("id: 5\ntopic: home/ups/rl\nstatus: approved\nentities:\n- field: a\n  component: sensor\n  unit: W\n- field: b\n  component: sensor\n  unit: V\n"), 0o644)
+	if err != nil {
+		t.Fatalf("write override: %v", err)
+	}
+	changed, err := s.ReloadDevice("home/ups/rl")
+	if err != nil || !changed {
+		t.Fatalf("reload changed: %v err=%v", changed, err)
+	}
+	ents, _ := s.ListEntities(d.ID)
+	if len(ents) != 2 || ents[0].Unit != "W" {
+		t.Fatalf("reloaded entities mismatch: %+v", ents)
+	}
+	// 再次 reload 相同 → 无变化
+	changed, _ = s.ReloadDevice("home/ups/rl")
+	if changed {
+		t.Fatal("reload same file should report no change")
+	}
+}
+
 func TestSanitizeTopic(t *testing.T) {
 	if got := sanitizeTopic("home/ups/ai-server-ups"); got != "home_ups_ai-server-ups" {
 		t.Fatalf("sanitize: %q", got)

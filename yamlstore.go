@@ -94,6 +94,19 @@ func (s *YamlStore) fileFor(topic string) string {
 	return filepath.Join(s.dir, sanitizeTopic(topic)+".yaml")
 }
 
+// topicForFile resolves a device yaml file path back to its topic by scanning
+// known devices (avoids sanitize ambiguity when topics contain underscores/+/#).
+func (s *YamlStore) topicForFile(fp string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for topic := range s.devices {
+		if s.fileFor(topic) == fp {
+			return topic
+		}
+	}
+	return ""
+}
+
 func (s *YamlStore) load() error {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -372,11 +385,19 @@ func (s *YamlStore) DeleteDevice(id int64) error {
 }
 
 func (s *YamlStore) ReplaceEntities(deviceID int64, ents []Entity) error {
+	_, err := s.ReplaceEntitiesWithChange(deviceID, ents)
+	return err
+}
+
+// ReplaceEntitiesWithChange merges inferred entities with stored yaml
+// overrides, persists when the effective set changed, and reports the change
+// (drives re-discovery for approved devices).
+func (s *YamlStore) ReplaceEntitiesWithChange(deviceID int64, ents []Entity) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.devicesByID(deviceID)
 	if d == nil {
-		return errNotFound(fmt.Sprintf("device id %d", deviceID))
+		return false, errNotFound(fmt.Sprintf("device id %d", deviceID))
 	}
 	// Override merge: the yaml file is the authoritative config. For every
 	// inferred entity, keep user-edited attributes from the yaml file when
@@ -411,11 +432,68 @@ func (s *YamlStore) ReplaceEntities(deviceID int64, ents []Entity) error {
 	// Hash compare — only write to disk when the set actually changed.
 	h := hashEntities(merged)
 	if h == s.entsHash[deviceID] {
-		return nil
+		return false, nil
 	}
 	s.entities[deviceID] = merged
 	s.entsHash[deviceID] = h
-	return s.saveDevice(d)
+	return true, s.saveDevice(d)
+}
+
+// ReloadDevice re-reads a device's yaml file (hot-reload). Updates the
+// in-memory device meta + entity set and reports whether the entity set
+// changed (so the bridge can re-publish discovery).
+func (s *YamlStore) ReloadDevice(topic string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := os.ReadFile(s.fileFor(topic))
+	if err != nil {
+		return false, err
+	}
+	var yd yamlDevice
+	if err := yaml.Unmarshal(data, &yd); err != nil {
+		return false, fmt.Errorf("reload %s: %w", topic, err)
+	}
+	dev, ok := s.devices[topic]
+	if !ok {
+		// new device appeared on disk (e.g. hand-written) — adopt it
+		dev = &Device{ID: s.nextID, Topic: yd.Topic, Prefix: firstSegment(topic)}
+		s.nextID++
+		s.devices[topic] = dev
+		s.entities[dev.ID] = nil
+		s.entsHash[dev.ID] = hashEntities(nil)
+	}
+	if yd.Status != "" {
+		dev.Status = yd.Status
+	}
+	dev.Name = yd.Name
+	dev.Manufacturer = yd.Manufacturer
+	dev.Model = yd.Model
+	dev.Serial = yd.Serial
+	dev.UpdatedAt = time.Now()
+
+	ents := make([]Entity, 0, len(yd.Entities))
+	for _, ye := range yd.Entities {
+		comp := ye.Component
+		if comp == "" {
+			comp = ComponentSensor
+		}
+		en := true
+		if ye.Enabled != nil {
+			en = *ye.Enabled
+		}
+		ents = append(ents, Entity{
+			Field: ye.Field, Name: ye.Name, Component: comp,
+			DeviceClass: ye.DeviceClass, Unit: ye.Unit, Icon: ye.Icon, Enabled: en,
+		})
+	}
+	for i := range ents {
+		ents[i].ID = int64(i + 1)
+	}
+	h := hashEntities(ents)
+	changed := h != s.entsHash[dev.ID]
+	s.entities[dev.ID] = ents
+	s.entsHash[dev.ID] = h
+	return changed, nil
 }
 
 func findEntity(ents []Entity, field string) (Entity, bool) {

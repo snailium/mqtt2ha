@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/fsnotify/fsnotify"
 )
 
 // Bridge is the core mqtt2ha engine.
@@ -50,7 +52,87 @@ func (b *Bridge) Start() error {
 	if token := b.client.Connect(); token.Wait() && token.Error() != nil {
 		return fmt.Errorf("mqtt connect: %w", token.Error())
 	}
+	if b.cfg.Backend == "yaml" {
+		go b.watchConfig()
+	}
 	return nil
+}
+
+// watchConfig hot-reloads the yaml device dir and re-publishes discovery for
+// approved devices whose entity set changed ("update instead of delete").
+func (b *Bridge) watchConfig() {
+	ys, ok := b.store.(*YamlStore)
+	if !ok {
+		return
+	}
+	dir := ys.dir
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("watch config: %v", err)
+		return
+	}
+	if err := watcher.Add(dir); err != nil {
+		log.Printf("watch config add %s: %v", dir, err)
+		watcher.Close()
+		return
+	}
+	defer watcher.Close()
+	log.Printf("hot-reload watching: %s", dir)
+
+	// coalesce bursts of (write,write,...) from editors by keying on filename
+	pending := map[string]time.Time{}
+	var flush = func() {
+		for name, at := range pending {
+			if !strings.HasSuffix(name, ".yaml") || name == "blacklist.yaml" {
+				delete(pending, name)
+				continue
+			}
+			topic := ys.topicForFile(filepath.Join(dir, name))
+			if topic == "" {
+				delete(pending, name)
+				continue
+			}
+			changed, err := ys.ReloadDevice(topic)
+			if err != nil {
+				log.Printf("reload %s: %v", name, err)
+				delete(pending, name)
+				continue
+			}
+			delete(pending, name)
+			dev, err := b.store.GetDeviceByTopic(topic)
+			if err != nil {
+				continue
+			}
+			if changed && dev.Status == StatusApproved {
+				if err := b.publishDevice(dev); err != nil {
+					log.Printf("re-publish %s: %v", topic, err)
+				} else {
+					log.Printf("hot-reload: re-published discovery %s", topic)
+				}
+			} else if changed {
+				log.Printf("hot-reload: %s changed (status=%s, skip)", topic, dev.Status)
+			}
+			_ = at
+		}
+	}
+	for {
+		select {
+		case ev, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) != 0 {
+				pending[filepath.Base(ev.Name)] = time.Now()
+				// debounce: wait for editor to finish writing
+				time.Sleep(300 * time.Millisecond)
+				flush()
+			}
+		case _, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+		}
+	}
 }
 
 func (b *Bridge) onConnect(_ mqtt.Client) {
@@ -208,7 +290,8 @@ func (b *Bridge) onData(_ mqtt.Client, msg mqtt.Message) {
 		return
 	}
 	dev = saved
-	if err := b.store.ReplaceEntities(dev.ID, ents); err != nil {
+	changed, err := b.store.ReplaceEntitiesWithChange(dev.ID, ents)
+	if err != nil {
 		log.Printf("replace entities %s: %v", topic, err)
 		return
 	}
@@ -249,6 +332,14 @@ func (b *Bridge) onData(_ mqtt.Client, msg mqtt.Message) {
 					log.Printf("auto-approved after %d msgs: %s", n, topic)
 				}
 			}
+		}
+	} else if dev.Status == StatusApproved && changed {
+		// hot-update: effective entity set changed (e.g. inference vs
+		// yaml override) → re-publish discovery instead of delete+recreate.
+		if err := b.publishDevice(dev); err != nil {
+			log.Printf("re-publish discovery %s: %v", topic, err)
+		} else {
+			log.Printf("re-published discovery %s (entities changed)", topic)
 		}
 	}
 }
