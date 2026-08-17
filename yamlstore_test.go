@@ -219,6 +219,32 @@ func TestYamlStoreReplaceEntitiesWithChange(t *testing.T) {
 	}
 }
 
+func TestYamlStoreYamlOnlyEntities(t *testing.T) {
+	s := newTestYamlStore(t)
+	d, _ := s.UpsertDevice(&Device{Topic: "home/ups/yonly"})
+	// yaml 含一个推断不会上报的字段（手动新增）
+	user := []Entity{{Field: "load_watts", Unit: "W", Enabled: true}, {Field: "manual_field", Unit: "V", Enabled: true}}
+	if err := s.ReplaceEntities(d.ID, user); err != nil {
+		t.Fatalf("user yaml: %v", err)
+	}
+	// 下一次消息：推断只报 load_watts（manual_field 不在推断集）
+	inferred := []Entity{{Field: "load_watts", Unit: "%", Enabled: true}}
+	if _, err := s.ReplaceEntitiesWithChange(d.ID, inferred); err != nil {
+		t.Fatalf("inferred: %v", err)
+	}
+	ents, _ := s.ListEntities(d.ID)
+	fields := map[string]string{}
+	for _, e := range ents {
+		fields[e.Field] = e.Unit
+	}
+	if fields["load_watts"] != "W" {
+		t.Fatalf("load_watts unit not preserved: %+v", fields)
+	}
+	if _, ok := fields["manual_field"]; !ok {
+		t.Fatalf("yaml-only entity lost after inferred ReplaceEntities: %+v", fields)
+	}
+}
+
 func TestYamlStoreReloadDevice(t *testing.T) {
 	s := newTestYamlStore(t)
 	d, _ := s.UpsertDevice(&Device{Topic: "home/ups/rl"})

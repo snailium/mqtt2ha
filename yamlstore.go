@@ -401,7 +401,9 @@ func (s *YamlStore) ReplaceEntitiesWithChange(deviceID int64, ents []Entity) (bo
 	}
 	// Override merge: the yaml file is the authoritative config. For every
 	// inferred entity, keep user-edited attributes from the yaml file when
-	// they are non-empty (or differ from the inferred default).
+	// they are non-empty (or differ from the inferred default). Also keep
+	// yaml-only entities (fields the inference no longer reports) so manual
+	// additions via yaml survive the next message's ReplaceEntities.
 	existing := s.entities[deviceID]
 	merged := make([]Entity, 0, len(ents))
 	for _, e := range ents {
@@ -425,6 +427,16 @@ func (s *YamlStore) ReplaceEntitiesWithChange(deviceID int64, ents []Entity) (bo
 			}
 		}
 		merged = append(merged, e)
+	}
+	// Preserve yaml-only entities (not in the inferred set).
+	seen := map[string]bool{}
+	for _, e := range ents {
+		seen[e.Field] = true
+	}
+	for _, old := range existing {
+		if !seen[old.Field] {
+			merged = append(merged, old)
+		}
 	}
 	for i := range merged {
 		merged[i].ID = int64(i + 1)
