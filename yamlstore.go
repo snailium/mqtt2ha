@@ -52,10 +52,10 @@ type yamlEntity struct {
 type YamlStore struct {
 	mu        sync.RWMutex
 	dir       string
-	devices   map[string]*Device            // key: topic
-	entities  map[int64][]Entity            // key: device id
-	entsHash  map[int64]string              // key: device id — sha256 of entity set
-	blacklist map[string]time.Time          // prefix -> created
+	devices   map[string]*Device   // key: topic
+	entities  map[int64][]Entity   // key: device id
+	entsHash  map[int64]string     // key: device id — sha256 of entity set
+	blacklist map[string]time.Time // prefix -> created
 	nextID    int64
 }
 
