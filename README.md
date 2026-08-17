@@ -187,6 +187,33 @@ against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
 - The web UI has no authentication — put it behind a reverse proxy or bind it
   to localhost if you expose it beyond your LAN.
 
+### YAML backend / per-topic config files
+
+- **Editing `unit`/`name`/`device_class` of an entity already registered in HA
+  does not take effect for existing entities** — Home Assistant does not update
+  static attributes of an already-created MQTT entity from a re-published
+  discovery message. To change these on an existing entity you must remove the
+  entity in HA (registry) and let it be re-discovered.
+- **Removing a field from a yaml file does not automatically remove its HA
+  entity.** `POST /api/reload` only re-publishes the entities currently in the
+  config; a deleted fields' stale entity remains in HA until removed manually.
+- **Manual reload is required**: changes to `devices/*.yaml` take effect only
+  after `POST /api/reload` (there is no filesystem watching / auto hot-reload).
+- **`msg_count` is in-memory only** (yaml backend) and resets to zero on
+  restart; it is diagnostic, not persisted.
+- **Topic-to-filename sanitization** maps `/` and a few special characters to
+  `_`; topics that themselves contain `_` (or `+`/`#`) can collide on disk.
+- **Concurrent external edits to a device yaml while mqtt2ha is writing it**:
+  writes use temp-file + atomic rename, but a manual edit racing that rename
+  could be overwritten — always pause traffic or accept the last-writer wins.
+
+### Docker / filesystem
+
+- The container runs as an unprivileged user; when mounting a host directory
+  for `/app/data`, ensure the host `devices/` subdirectory is writable by both
+  the container user (or ACL) and the host user who edits the yaml files (e.g.
+  `chown` + `setfacl` default ACL).
+
 ## Docker
 
 ```bash
