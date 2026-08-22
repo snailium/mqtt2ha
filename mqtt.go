@@ -279,7 +279,7 @@ func (b *Bridge) publishDevice(dev *Device) error {
 			log.Printf("cleared discovery %s (entity disabled)", topic)
 			continue
 		}
-		topic, payload, err := BuildDiscovery(dev, e, dev.Topic)
+		topic, payload, err := BuildDiscovery(b.cfg.MQTT.DiscoveryPrefix, dev, e, dev.Topic)
 		if err != nil {
 			return err
 		}

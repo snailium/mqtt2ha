@@ -89,7 +89,7 @@ func TestBuildDiscoveryTemplate(t *testing.T) {
 	dev := &Device{Topic: "home/ups/ups", Name: "ups", Model: "Back-UPS NS 1500M2"}
 	ent := Entity{Field: "battery_charge_percent", Name: "battery_charge_percent", DeviceClass: "battery", Unit: "%"}
 
-	topic, payload, err := BuildDiscovery(dev, ent, dev.Topic)
+	topic, payload, err := BuildDiscovery("homeassistant", dev, ent, dev.Topic)
 	if err != nil {
 		t.Fatalf("BuildDiscovery: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestBuildDiscoveryBinarySensor(t *testing.T) {
 	dev := &Device{Topic: "home/sensors/room1", Name: "room1"}
 	ent := Entity{Field: "motion_detected", Name: "motion_detected", Component: ComponentBinarySensor, DeviceClass: "motion"}
 
-	topic, payload, err := BuildDiscovery(dev, ent, dev.Topic)
+	topic, payload, err := BuildDiscovery("homeassistant", dev, ent, dev.Topic)
 	if err != nil {
 		t.Fatalf("BuildDiscovery: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestBuildDiscoverySensorStateClass(t *testing.T) {
 	dev := &Device{Topic: "home/ups/ups", Name: "ups"}
 	ent := Entity{Field: "battery_voltage", Name: "battery_voltage", DeviceClass: "voltage", Unit: "V"}
 
-	_, payload, err := BuildDiscovery(dev, ent, dev.Topic)
+	_, payload, err := BuildDiscovery("homeassistant", dev, ent, dev.Topic)
 	if err != nil {
 		t.Fatalf("BuildDiscovery: %v", err)
 	}

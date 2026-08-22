@@ -71,8 +71,9 @@ func entityUniqueID(dev *Device, ent Entity) string {
 }
 
 // BuildDiscovery builds the discovery JSON for one entity of a device.
-// Returns the discovery topic (homeassistant/<component>/<unique_id>/config) and payload.
-func BuildDiscovery(dev *Device, ent Entity, dataTopic string) (string, []byte, error) {
+// prefix is the HA discovery prefix (e.g. "homeassistant"); returning the
+// discovery topic and payload, which go on the broker for HA to consume.
+func BuildDiscovery(prefix string, dev *Device, ent Entity, dataTopic string) (string, []byte, error) {
 	uid := entityUniqueID(dev, ent)
 	component := ent.Component
 	if component == "" {
@@ -113,6 +114,6 @@ func BuildDiscovery(dev *Device, ent Entity, dataTopic string) (string, []byte, 
 	if err != nil {
 		return "", nil, err
 	}
-	topic := fmt.Sprintf("%s/%s/%s/config", "homeassistant", component, uid)
+	topic := fmt.Sprintf("%s/%s/%s/config", prefix, component, uid)
 	return topic, payload, nil
 }

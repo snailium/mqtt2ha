@@ -585,8 +585,13 @@ func (s *YamlStore) ListEntities(deviceID int64) ([]Entity, error) {
 func (s *YamlStore) IsBlacklisted(topic string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for prefix := range s.blacklist {
-		if strings.HasPrefix(topic, prefix) {
+	// Align with the SQLite backend: an entry is an exact topic OR a
+	// prefix rooted at a path boundary. Trim trailing "/" so "zigbee2mqtt/"
+	// matches bare "zigbee2mqtt", and the exact-topic check prevents
+	// blacklisting "home/ups/ups" from accidentally catching "home/ups/upstream".
+	for bl := range s.blacklist {
+		bl = strings.TrimSuffix(bl, "/")
+		if topic == bl || strings.HasPrefix(topic, bl+"/") {
 			return true, nil
 		}
 	}
