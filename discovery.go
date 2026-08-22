@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 )
@@ -44,9 +46,12 @@ type DiscoveryDevice struct {
 	SerialNumber string   `json:"sn,omitempty"`
 }
 
-// deviceKey builds a stable, URL-safe identifier from a topic.
+// deviceKey builds a stable, URL-safe identifier from a topic. Because
+// sanitize maps several chars to '_', two distinct topics (home/ups/ups vs
+// home_ups_ups) would otherwise collide — append a short hash of the original
+// topic to disambiguate.
 func deviceKey(topic string) string {
-	return "mqtt2ha_" + sanitize(topic)
+	return "mqtt2ha_" + sanitize(topic) + "_" + topicHash(topic)
 }
 
 // sanitize keeps [a-zA-Z0-9_-], replacing everything else with '_'.
@@ -63,11 +68,20 @@ func sanitize(s string) string {
 	return string(out)
 }
 
+// topicHash returns a short stable hash of the raw topic, used to make HA
+// unique_ids/device identifiers collision-free even after sanitize collapses
+// distinct topics to the same sanitized form.
+func topicHash(topic string) string {
+	sum := sha256.Sum256([]byte(topic))
+	return hex.EncodeToString(sum[:3]) // 6 hex chars, negligible collision odds
+}
+
 // entityUniqueID builds the stable unique_id for one entity.
-// The "v2" prefix is load-bearing: HA caches discovery hashes by topic, so
-// bump it (v2→v3) to force HA to recreate entities from scratch.
+// The "v3" prefix is load-bearing: HA caches discovery hashes by topic, so
+// bump it (v2→v3) to force HA to recreate entities from scratch. The hash
+// suffix disambiguates topics that sanitize() would otherwise collapse.
 func entityUniqueID(dev *Device, ent Entity) string {
-	return fmt.Sprintf("mqtt2ha_v2_%s_%s", sanitize(dev.Topic), sanitize(ent.Field))
+	return fmt.Sprintf("mqtt2ha_v3_%s_%s_%s", sanitize(dev.Topic), topicHash(dev.Topic), sanitize(ent.Field))
 }
 
 // BuildDiscovery builds the discovery JSON for one entity of a device.

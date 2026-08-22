@@ -159,8 +159,17 @@ discovery works for both Telegraf-style nested payloads and flat JSON.
 
 ## Project status
 
-This is an **M1** release: the core loop is implemented, tested and verified
-against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
+This is a **M1 + M2 + M3** release: the core bridge loop, the approval web
+workflow, and the open-source hardening round are all implemented, tested and
+verified against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT
+setup. The latest stable build is published at
+`ghcr.io/snailium/mqtt2ha:latest` (built from `main`).
+
+> **Note on tags.** A `v1.0.0` image tag exists on ghcr.io, but the git
+> repository previously had **no** annotated release tags and the release
+> workflow had never run. A proper `v*` tag + release was created as part of
+> the P2 hardening (see below) so the release pipeline (gofmt/vet/test →
+> cross-compile → attach binaries) produces real artifacts.
 
 - **M1 — core (done):** observation window, auto mode, self-discovery
   detection, exact-topic blacklist, SQLite registry, Telegraf/flat JSON
@@ -173,19 +182,24 @@ against a live Home Assistant + mosquitto + Telegraf + Zigbee2MQTT setup.
   on/off-style string payloads, device_class inference: motion/door/window/
   occupancy/moisture/connectivity/presence), `state_class: measurement` for
   numeric sensors, extended inference (humidity/pressure/current/energy/
-  signal/illuminance), GitHub Actions CI (gofmt/vet/test) and tagged releases
-  with cross-compiled binaries (linux/darwin/windows × amd64/arm64). Not
-  planned: writable components (switch/number) — they need command topics and
-  conflict with the read-only design.
+  signal/illuminance). Not planned: writable components (switch/number) —
+  they need command topics and conflict with the read-only design.
+- **P0/P1 hardening (done, 2026-08-22):** yaml-backend entity identity fix,
+  blacklist boundary alignment, configurable discovery prefix, web-security
+  hardening (POST-only + CSRF + optional auth token), `http: ""` disables the
+  UI, yaml import cleanup, exact-topic blacklist button. CI now runs
+  gofmt/vet/test/race + govulncheck and a release workflow exists.
 
 ## Known limitations
 
-- Only `sensor` entities are published (M3 will add more components).
+- Only `sensor` and `binary_sensor` entities are published; other components
+  (switch, number, …) are intentionally out of scope.
 - Subscribing to `#` will observe *every* JSON topic on the broker (including
   frigate, system metrics, …). Use the blacklist or narrow `subscribe` to what
   you actually want in HA.
-- The web UI has no authentication — put it behind a reverse proxy or bind it
-  to localhost if you expose it beyond your LAN.
+- The web UI has **no authentication by default** (LAN); set `web_token` in
+  the config to require a bearer token on every route, or put it behind a
+  reverse proxy / bind it to localhost.
 
 ### YAML backend / per-topic config files
 

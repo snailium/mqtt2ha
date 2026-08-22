@@ -94,7 +94,7 @@ func TestBuildDiscoveryTemplate(t *testing.T) {
 		t.Fatalf("BuildDiscovery: %v", err)
 	}
 	// topic must be a fresh unique_id (v2 prefix, no stale discovery-hash collisions)
-	if !strings.Contains(topic, "mqtt2ha_v2_home_ups_ups_battery_charge_percent") {
+	if !strings.Contains(topic, "mqtt2ha_v3_home_ups_ups_77964a_battery_charge_percent") {
 		t.Errorf("unexpected discovery topic: %s", topic)
 	}
 	// value_template must handle Telegraf's nested fields format

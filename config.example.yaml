@@ -21,3 +21,6 @@ backend: "sqlite"
 devices_dir: "devices"
 # web UI listen address; empty string disables the UI
 http: ":8080"
+# optional bearer token that protects ALL web routes (UI + API) when set.
+# Empty = no auth (LAN default). Send it as "Authorization: Bearer <token>".
+web_token: ""

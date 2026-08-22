@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -33,6 +37,19 @@ func main() {
 	}
 	defer store.Close()
 
+	// Graceful shutdown (P2 #9): SIGINT/SIGTERM disconnect MQTT, close the
+	// store (checkpointing SQLite WAL), then exit cleanly.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	done := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		log.Printf("shutdown signal received; disconnecting")
+		stop()
+		close(done)
+	}()
+
 	bridge := NewBridge(cfg, store)
 	if err := bridge.Start(); err != nil {
 		log.Fatalf("start bridge: %v", err)
@@ -43,15 +60,21 @@ func main() {
 	if cfg.HTTP != "" {
 		mux := http.NewServeMux()
 		bridge.RegisterWeb(mux)
+		srv := &http.Server{Addr: cfg.HTTP, Handler: mux}
 		go func() {
 			log.Printf("web UI listening on %s", cfg.HTTP)
-			if err := http.ListenAndServe(cfg.HTTP, mux); err != nil {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Printf("web server: %v (bridge keeps running)", err)
 			}
+		}()
+		go func() {
+			<-ctx.Done()
+			_ = srv.Shutdown(context.Background())
 		}()
 	} else {
 		log.Printf("web UI disabled (http is empty)")
 	}
 
-	select {}
+	<-done
+	log.Printf("mqtt2ha exited")
 }

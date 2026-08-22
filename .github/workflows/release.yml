@@ -25,11 +25,19 @@ jobs:
           - os: windows
             arch: amd64
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      # Pinned by SHA (audit P2 #8): checkout, setup-go, and the release
+      # uploader are referenced by immutable commit, not a mutable tag.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
+
+      # Audit P2 #8: never release an untested commit. Run the full test suite
+      # (incl. race + vet) before building the release binaries.
+      - name: Pre-release verification (vet + race tests)
+        run: |
+          go vet ./...
+          go test -race ./...
 
       - name: Build
         run: |
@@ -40,7 +48,7 @@ jobs:
             -o mqtt2ha-${{ matrix.os }}-${{ matrix.arch }}$ext .
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: mqtt2ha-*
           generate_release_notes: true
