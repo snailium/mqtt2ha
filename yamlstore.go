@@ -39,6 +39,13 @@ type yamlDevice struct {
 }
 
 type yamlEntity struct {
+	// ID is a globally-unique entity id (across all devices), mirroring the
+	// SQLite backend's autoincrement semantics. It gives the web UI a stable,
+	// unambiguous handle for UpdateEntity / getEntityByID; DeviceID records the
+	// owning device so republishDeviceOfEntity works after an edit. Older yaml
+	// files without these fields get them assigned on first load and persisted.
+	ID          int64  `yaml:"id,omitempty"`
+	DeviceID    int64  `yaml:"device_id,omitempty"`
 	Field       string `yaml:"field"`
 	Name        string `yaml:"name,omitempty"`
 	Component   string `yaml:"component,omitempty"`
@@ -56,7 +63,8 @@ type YamlStore struct {
 	entities  map[int64][]Entity   // key: device id
 	entsHash  map[int64]string     // key: device id — sha256 of entity set
 	blacklist map[string]time.Time // prefix -> created
-	nextID    int64
+	nextID    int64                // next global DEVICE id
+	nextEntID int64                // next global ENTITY id (unique across devices)
 }
 
 // NewYamlStore creates the store, creating dir if needed and loading all
@@ -74,6 +82,8 @@ func NewYamlStore(dir string) (*YamlStore, error) {
 		entities:  map[int64][]Entity{},
 		entsHash:  map[int64]string{},
 		blacklist: map[string]time.Time{},
+		// entity (and device) ids start at 1; nextID is advanced by load()
+		nextEntID: 1,
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -107,6 +117,29 @@ func (s *YamlStore) topicForFile(fp string) string {
 	return ""
 }
 
+// assignEntityIDs stamps every entity in ents with a globally-unique ID and
+// the owning device's ID. Entities that already carry a positive ID keep it
+// (so web edits stay stable across ReplaceEntities), otherwise a fresh global
+// ID is minted from nextEntID. Returns whether any ID was newly minted (caller
+// persists the migration). Caller holds mu (or load() pre-lock).
+func (s *YamlStore) assignEntityIDs(deviceID int64, ents []Entity) bool {
+	minted := false
+	for i := range ents {
+		ents[i].DeviceID = deviceID
+		if ents[i].ID <= 0 {
+			ents[i].ID = s.nextEntID
+			s.nextEntID++
+			minted = true
+		} else if ents[i].ID >= s.nextEntID {
+			// keep monotonicity across existing persisted IDs
+			s.nextEntID = ents[i].ID + 1
+		}
+	}
+	return minted
+}
+
+// load reads all devices/*.yaml and builds in-memory state.
+// Entities are stamped with global IDs + their device ID on load.
 func (s *YamlStore) load() error {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -150,12 +183,22 @@ func (s *YamlStore) load() error {
 				en = *ye.Enabled
 			}
 			ents = append(ents, Entity{
+				ID: ye.ID, DeviceID: ye.DeviceID,
 				Field: ye.Field, Name: ye.Name, Component: comp,
 				DeviceClass: ye.DeviceClass, Unit: ye.Unit, Icon: ye.Icon,
 				Enabled: en,
 			})
 		}
+		// Stamps global IDs (minting for legacy files without IDs) and the
+		// owning device ID. Newly-minted IDs are persisted now so they stay
+		// stable across restarts. Register the entity set first so saveDevice
+		// writes complete entities (not the empty pre-slice).
 		s.entities[dev.ID] = ents
+		if s.assignEntityIDs(dev.ID, ents) {
+			if err := s.saveDevice(dev); err != nil {
+				return err
+			}
+		}
 		s.entsHash[dev.ID] = hashEntities(ents)
 		if dev.ID > maxID {
 			maxID = dev.ID
@@ -194,6 +237,7 @@ func (s *YamlStore) saveDevice(dev *Device) error {
 	for _, e := range ents {
 		en := e.Enabled
 		yd.Entities = append(yd.Entities, yamlEntity{
+			ID: e.ID, DeviceID: e.DeviceID,
 			Field: e.Field, Name: e.Name, Component: e.Component,
 			DeviceClass: e.DeviceClass, Unit: e.Unit, Icon: e.Icon,
 			Enabled: &en,
@@ -333,19 +377,25 @@ func (s *YamlStore) UpdateDeviceMeta(id int64, name, model, manufacturer, serial
 func (s *YamlStore) UpdateEntity(id int64, e Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, ents := range s.entities {
+	for devID, ents := range s.entities {
 		for i := range ents {
 			if ents[i].ID == id {
+				dev := s.devicesByID(devID)
+				if dev == nil {
+					return errNotFound(fmt.Sprintf("device id %d", devID))
+				}
 				ents[i] = e
-				s.entsHash[id] = hashEntities(ents)
-				return s.saveDevice(s.devicesByID(id))
+				ents[i].ID = id
+				ents[i].DeviceID = devID
+				s.entsHash[devID] = hashEntities(ents)
+				return s.saveDevice(dev)
 			}
 		}
 	}
 	return errNotFound(fmt.Sprintf("entity id %d", id))
 }
 
-// devicesByID returns the device for an entity id — caller holds mu.
+// devicesByID returns the device for a DEVICE id — caller holds mu.
 func (s *YamlStore) devicesByID(id int64) *Device {
 	for _, d := range s.devices {
 		if d.ID == id {
@@ -408,6 +458,9 @@ func (s *YamlStore) ReplaceEntitiesWithChange(deviceID int64, ents []Entity) (bo
 	merged := make([]Entity, 0, len(ents))
 	for _, e := range ents {
 		if old, ok := findEntity(existing, e.Field); ok {
+			// preserve identity so web edits + re-discovery stay stable
+			e.ID = old.ID
+			e.DeviceID = old.DeviceID
 			if old.Name != "" {
 				e.Name = old.Name
 			}
@@ -438,9 +491,10 @@ func (s *YamlStore) ReplaceEntitiesWithChange(deviceID int64, ents []Entity) (bo
 			merged = append(merged, old)
 		}
 	}
-	for i := range merged {
-		merged[i].ID = int64(i + 1)
-	}
+	// Assign globally-unique entity IDs (preserving existing ones + device
+	// ownership). These must NOT be per-device sequence numbers — web.go
+	// addresses entities by a global ID across all devices.
+	s.assignEntityIDs(deviceID, merged)
 	// Hash compare — only write to disk when the set actually changed.
 	h := hashEntities(merged)
 	if h == s.entsHash[deviceID] {
@@ -494,13 +548,12 @@ func (s *YamlStore) ReloadDevice(topic string) (bool, error) {
 			en = *ye.Enabled
 		}
 		ents = append(ents, Entity{
+			ID: ye.ID, DeviceID: ye.DeviceID,
 			Field: ye.Field, Name: ye.Name, Component: comp,
 			DeviceClass: ye.DeviceClass, Unit: ye.Unit, Icon: ye.Icon, Enabled: en,
 		})
 	}
-	for i := range ents {
-		ents[i].ID = int64(i + 1)
-	}
+	s.assignEntityIDs(dev.ID, ents)
 	h := hashEntities(ents)
 	changed := h != s.entsHash[dev.ID]
 	s.entities[dev.ID] = ents
@@ -615,6 +668,8 @@ func (s *YamlStore) ImportSnapshot(devs []Device, entsByDevice map[int64][]Entit
 		}
 	}
 	s.nextID = maxID + 1
+	// mint entity ids from a fresh baseline (import provides none)
+	s.nextEntID = 1
 	for _, d := range devs {
 		cp := d
 		cp.CreatedAt = time.Now()
@@ -624,6 +679,8 @@ func (s *YamlStore) ImportSnapshot(devs []Device, entsByDevice map[int64][]Entit
 		}
 		s.devices[cp.Topic] = &cp
 		ents := entsByDevice[d.ID]
+		// stamp globally-unique entity ids + device ownership
+		s.assignEntityIDs(cp.ID, ents)
 		s.entities[cp.ID] = ents
 		s.entsHash[cp.ID] = hashEntities(ents)
 		if err := s.saveDevice(&cp); err != nil {
