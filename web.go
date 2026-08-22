@@ -10,21 +10,25 @@ import (
 	"strings"
 )
 
-// RegisterWeb wires the M2 web UI routes.
+// RegisterWeb wires the M2 web UI routes. Every route is guarded by optional
+// bearer-token auth (config.WebToken); state-changing routes additionally
+// require POST + a valid CSRF token.
 func (b *Bridge) RegisterWeb(mux *http.ServeMux) {
-	mux.HandleFunc("/", b.handleIndex)
-	mux.HandleFunc("/api/devices", b.handleAPI)
-	mux.HandleFunc("/api/reload", b.handleReload)
-	mux.HandleFunc("/approve/", b.handleApprove)
-	mux.HandleFunc("/reject/", b.handleReject)
-	mux.HandleFunc("/blacklist/", b.handleBlacklist)
-	mux.HandleFunc("/refresh/", b.handleRefresh)
+	// All routes pass through auth. Handler names registered as both the bare
+	// path and (where needed) with a trailing segment.
+	mux.HandleFunc("/", b.requireAuth(b.handleIndex))
+	mux.HandleFunc("/api/devices", b.requireAuth(b.handleAPI))
+	mux.HandleFunc("/api/reload", b.requireAuth(b.handleReload))
+	mux.HandleFunc("/approve/", b.requireAuth(b.handleApprove))
+	mux.HandleFunc("/reject/", b.requireAuth(b.handleReject))
+	mux.HandleFunc("/blacklist/", b.requireAuth(b.handleBlacklist))
+	mux.HandleFunc("/refresh/", b.requireAuth(b.handleRefresh))
 	// M2: edit + export/import
-	mux.HandleFunc("/api/entity/", b.handleEntityUpdate)
-	mux.HandleFunc("/api/device/", b.handleDeviceUpdate)
-	mux.HandleFunc("/api/export", b.handleExport)
-	mux.HandleFunc("/api/import", b.handleImport)
-	mux.HandleFunc("/api/blacklist/delete", b.handleBlacklistDelete)
+	mux.HandleFunc("/api/entity/", b.requireAuth(b.handleEntityUpdate))
+	mux.HandleFunc("/api/device/", b.requireAuth(b.handleDeviceUpdate))
+	mux.HandleFunc("/api/export", b.requireAuth(b.handleExport))
+	mux.HandleFunc("/api/import", b.requireAuth(b.handleImport))
+	mux.HandleFunc("/api/blacklist/delete", b.requireAuth(b.handleBlacklistDelete))
 }
 
 var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
@@ -50,6 +54,7 @@ code{background:#eee;padding:1px 4px}
 <div class="toolbar">
   <a class="btn" href="/api/export">导出配置</a>
   <form class="inline" method="post" action="/api/import" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="file" name="file" accept=".json" required>
     <button type="submit">导入配置</button>
   </form>
@@ -57,7 +62,7 @@ code{background:#eee;padding:1px 4px}
 <h3>黑名单:</h3>
 {{range .Blacklist}}
   <span class="bl-item"><code>{{.}}</code>
-  <form class="inline" method="post" action="/api/blacklist/delete"><input type="hidden" name="prefix" value="{{.}}"><button type="submit">✕</button></form>
+  <form class="inline" method="post" action="/api/blacklist/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="prefix" value="{{.}}"><button type="submit">✕</button></form>
   </span>
 {{else}}<span>（空）</span>{{end}}
 <table>
@@ -68,6 +73,7 @@ code{background:#eee;padding:1px 4px}
 <td><code>{{.Topic}}</code></td>
 <td>
   <form method="post" action="/api/device/{{.ID}}">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="text" class="wide" name="name" value="{{.Name}}"><br>
     <input type="text" class="wide" name="model" value="{{.Model}}">
     <input type="hidden" name="manufacturer" value="{{.Manufacturer}}">
@@ -80,6 +86,7 @@ code{background:#eee;padding:1px 4px}
 {{range $e := .Entities}}
   <div class="entity-row">
   <form method="post" action="/api/entity/{{$e.ID}}">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <code>{{$e.Field}}</code>
     <select name="component">
       <option value="sensor" {{if eq $e.Component "sensor"}}selected{{end}}>sensor</option>
@@ -95,10 +102,10 @@ code{background:#eee;padding:1px 4px}
 {{end}}
 </td>
 <td>
-{{if eq .Status "pending"}}<a class="btn" href="/approve/{{.ID}}">批准</a>
-<a class="btn" href="/reject/{{.ID}}">拒绝</a>{{end}}
-{{if ne .Status "blacklisted"}}<a class="btn" href="/blacklist/{{.ID}}">拉黑</a>{{end}}
-<a class="btn" href="/refresh/{{.ID}}">重发布</a>
+{{if eq .Status "pending"}}<form class="inline" method="post" action="/approve/{{.ID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="btn">批准</button></form>
+<form class="inline" method="post" action="/reject/{{.ID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="btn">拒绝</button></form>{{end}}
+{{if ne .Status "blacklisted"}}<form class="inline" method="post" action="/blacklist/{{.ID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="btn">拉黑 {{.Topic}}</button></form>{{end}}
+<form class="inline" method="post" action="/refresh/{{.ID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="btn">重发布</button></form>
 </td>
 </tr>
 {{end}}
@@ -112,6 +119,7 @@ type devView struct {
 
 type indexData struct {
 	Mode      string
+	CSRF      string
 	Blacklist []string
 	Devices   []devView
 }
@@ -127,7 +135,7 @@ func (b *Bridge) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	data := indexData{Mode: b.cfg.Mode, Blacklist: bl}
+	data := indexData{Mode: b.cfg.Mode, CSRF: b.csrfToken, Blacklist: bl}
 	for _, d := range devs {
 		ents, err := b.store.ListEntities(d.ID)
 		if err != nil {
@@ -142,8 +150,7 @@ func (b *Bridge) handleIndex(w http.ResponseWriter, r *http.Request) {
 // discovery for any whose entity set changed ("update instead of delete").
 // Trigger after editing files in devices_dir.
 func (b *Bridge) handleReload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+	if !b.requireWrite(w, r) {
 		return
 	}
 	n, err := b.ReloadAll()
@@ -207,6 +214,9 @@ func (b *Bridge) handleAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bridge) handleApprove(w http.ResponseWriter, r *http.Request) {
+	if !b.requireWrite(w, r) {
+		return
+	}
 	id := idFromPath(w, r)
 	if id == 0 {
 		return
@@ -226,6 +236,9 @@ func (b *Bridge) handleApprove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bridge) handleReject(w http.ResponseWriter, r *http.Request) {
+	if !b.requireWrite(w, r) {
+		return
+	}
 	id := idFromPath(w, r)
 	if id == 0 {
 		return
@@ -241,6 +254,9 @@ func (b *Bridge) handleReject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bridge) handleBlacklist(w http.ResponseWriter, r *http.Request) {
+	if !b.requireWrite(w, r) {
+		return
+	}
 	id := idFromPath(w, r)
 	if id == 0 {
 		return
@@ -250,16 +266,22 @@ func (b *Bridge) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device not found", 404)
 		return
 	}
-	if err := b.store.AddBlacklist(dev.Prefix); err != nil {
+	// P1 #7: blacklist the EXACT topic, not the first-segment prefix. This
+	// matches README's "exact-topic blacklist" claim and avoids nuking
+	// unrelated topics under the same first segment (e.g. home/ups/cp1000).
+	if err := b.store.AddBlacklist(dev.Topic); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	_ = b.store.UpdateDeviceStatus(dev.ID, StatusBlacklisted)
-	log.Printf("blacklisted by user: %s (prefix %s)", dev.Topic, dev.Prefix)
+	log.Printf("blacklisted by user: %s (exact topic)", dev.Topic)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (b *Bridge) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if !b.requireWrite(w, r) {
+		return
+	}
 	id := idFromPath(w, r)
 	if id == 0 {
 		return
@@ -282,6 +304,9 @@ func (b *Bridge) handleRefresh(w http.ResponseWriter, r *http.Request) {
 // handleEntityUpdate updates one entity (name/class/unit/enabled) and
 // re-publishes the device discovery so HA reflects the change.
 func (b *Bridge) handleEntityUpdate(w http.ResponseWriter, r *http.Request) {
+	if !b.requireWrite(w, r) {
+		return
+	}
 	id := idFromPath(w, r)
 	if id == 0 {
 		return
@@ -299,6 +324,12 @@ func (b *Bridge) handleEntityUpdate(w http.ResponseWriter, r *http.Request) {
 	ent.Component = r.FormValue("component")
 	if ent.Component == "" {
 		ent.Component = ComponentSensor
+	}
+	// P1 #4: only allow whitelisted component names (prevents the "component" field
+	// from smuggling arbitrary HA component identifiers into discovery).
+	if !validComponent(ent.Component) {
+		http.Error(w, "unsupported component: "+ent.Component, 400)
+		return
 	}
 	ent.DeviceClass = r.FormValue("device_class")
 	ent.Unit = r.FormValue("unit")
@@ -318,6 +349,9 @@ func (b *Bridge) handleEntityUpdate(w http.ResponseWriter, r *http.Request) {
 
 // handleDeviceUpdate updates device metadata and re-publishes discovery.
 func (b *Bridge) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
+	if !b.requireWrite(w, r) {
+		return
+	}
 	id := idFromPath(w, r)
 	if id == 0 {
 		return
@@ -410,13 +444,21 @@ func (b *Bridge) handleExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bridge) handleImport(w http.ResponseWriter, r *http.Request) {
+	// P1 #4: import replaces the whole registry — require a valid write CSRF.
+	if !b.requireWrite(w, r) {
+		return
+	}
+	// P1 #4: cap the request body to avoid memory-exhaustion DoS via an
+	// unbounded import body.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 	var data exportData
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&data); err != nil {
 		// also accept multipart file upload
 		if f, _, ferr := r.FormFile("file"); ferr == nil {
 			defer f.Close()
-			dec = json.NewDecoder(f)
+			// protect the multipart upload too
+			dec = json.NewDecoder(http.MaxBytesReader(w, f, 1<<20))
 			if derr := dec.Decode(&data); derr != nil {
 				http.Error(w, "bad json: "+derr.Error(), 400)
 				return
@@ -429,6 +471,29 @@ func (b *Bridge) handleImport(w http.ResponseWriter, r *http.Request) {
 	if data.Version != 1 {
 		http.Error(w, fmt.Sprintf("unsupported export version %d", data.Version), 400)
 		return
+	}
+	// P1 #4: validate imported rows — non-empty topic, whitelisted component,
+	// known status; reject anything malformed before it touches the registry.
+	validStatus := map[string]bool{StatusPending: true, StatusApproved: true, StatusBlacklisted: true}
+	for _, d := range data.Devices {
+		if trimBlank(d.Topic) {
+			http.Error(w, "import rejected: device with empty topic", 400)
+			return
+		}
+		if d.Status != "" && !validStatus[d.Status] {
+			http.Error(w, fmt.Sprintf("import rejected: invalid status %q", d.Status), 400)
+			return
+		}
+		for _, e := range d.Entities {
+			if trimBlank(e.Field) {
+				http.Error(w, "import rejected: entity with empty field", 400)
+				return
+			}
+			if e.Component != "" && !validComponent(e.Component) {
+				http.Error(w, fmt.Sprintf("import rejected: unsupported component %q", e.Component), 400)
+				return
+			}
+		}
 	}
 	devs := make([]Device, 0, len(data.Devices))
 	ents := make(map[int64][]Entity, len(data.Devices))
@@ -458,6 +523,9 @@ func (b *Bridge) handleImport(w http.ResponseWriter, r *http.Request) {
 // ---- M2: blacklist management ----
 
 func (b *Bridge) handleBlacklistDelete(w http.ResponseWriter, r *http.Request) {
+	if !b.requireWrite(w, r) {
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", 400)
 		return

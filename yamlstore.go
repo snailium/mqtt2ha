@@ -666,6 +666,18 @@ func (s *YamlStore) loadBlacklist() error {
 func (s *YamlStore) ImportSnapshot(devs []Device, entsByDevice map[int64][]Entity, blacklist []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// P1 #6: remember existing on-disk topics so we can delete devices that are
+	// absent from the snapshot (otherwise a stale devices/*.yaml resurrects on
+	// restart, defeating import-as-replacement).
+	stale := make([]string, 0, len(s.devices))
+	for topic := range s.devices {
+		stale = append(stale, topic)
+	}
+	inNew := make(map[string]bool, len(devs))
+	for _, d := range devs {
+		inNew[d.Topic] = true
+	}
+
 	maxID := int64(0)
 	for _, d := range devs {
 		if d.ID > maxID {
@@ -675,6 +687,19 @@ func (s *YamlStore) ImportSnapshot(devs []Device, entsByDevice map[int64][]Entit
 	s.nextID = maxID + 1
 	// mint entity ids from a fresh baseline (import provides none)
 	s.nextEntID = 1
+	// reset in-memory maps to the imported snapshot only
+	s.devices = map[string]*Device{}
+	s.entities = map[int64][]Entity{}
+	s.entsHash = map[int64]string{}
+	// delete stale on-disk files (best-effort; absent from snapshot)
+	for _, topic := range stale {
+		if inNew[topic] {
+			continue
+		}
+		if err := os.Remove(s.fileFor(topic)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	for _, d := range devs {
 		cp := d
 		cp.CreatedAt = time.Now()

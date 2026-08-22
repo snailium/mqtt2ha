@@ -15,7 +15,8 @@ type Config struct {
 	DBPath     string     `yaml:"database"`
 	Backend    string     `yaml:"backend"`     // "sqlite" (default) or "yaml"
 	DevicesDir string     `yaml:"devices_dir"` // yaml backend: per-topic config files
-	HTTP       string     `yaml:"http"`        // web UI listen address, e.g. ":8080"
+	HTTP       string     `yaml:"http"`        // web UI listen address, e.g. ":8080"; empty disables the UI
+	WebToken   string     `yaml:"web_token"`   // optional bearer token protecting the web UI/API (empty = no auth)
 }
 
 type MQTTConfig struct {

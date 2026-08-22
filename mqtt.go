@@ -17,6 +17,10 @@ type Bridge struct {
 	store  Backend
 	client mqtt.Client
 
+	// csrfToken protects write operations against CSRF. A per-process random
+	// token rendered into the web UI and required on every state-changing POST.
+	csrfToken string
+
 	// discoveredIndex maps a node prefix (e.g. "zigbee2mqtt/") to whether
 	// that node has published its own HA discovery message (seen via
 	// homeassistant/+/+/config). In-memory, rebuilt on start.
@@ -29,6 +33,7 @@ func NewBridge(cfg *Config, store Backend) *Bridge {
 	return &Bridge{
 		cfg:         cfg,
 		store:       store,
+		csrfToken:   newCSRFToken(),
 		selfDiscIdx: map[string]bool{},
 	}
 }

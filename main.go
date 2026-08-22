@@ -39,15 +39,19 @@ func main() {
 	}
 	log.Printf("mqtt2ha started (mode=%s, observe=%d, broker=%s)", cfg.Mode, cfg.Observe, cfg.MQTT.Broker)
 
-	// Web UI (M2)
-	mux := http.NewServeMux()
-	bridge.RegisterWeb(mux)
-	go func() {
-		log.Printf("web UI listening on %s", cfg.HTTP)
-		if err := http.ListenAndServe(cfg.HTTP, mux); err != nil {
-			log.Printf("web server: %v (bridge keeps running)", err)
-		}
-	}()
+	// Web UI (M2). Empty cfg.HTTP disables the UI entirely.
+	if cfg.HTTP != "" {
+		mux := http.NewServeMux()
+		bridge.RegisterWeb(mux)
+		go func() {
+			log.Printf("web UI listening on %s", cfg.HTTP)
+			if err := http.ListenAndServe(cfg.HTTP, mux); err != nil {
+				log.Printf("web server: %v (bridge keeps running)", err)
+			}
+		}()
+	} else {
+		log.Printf("web UI disabled (http is empty)")
+	}
 
 	select {}
 }
